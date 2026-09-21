@@ -197,22 +197,19 @@ export default function ModalNavbar({
       )}
 
       {/* Interactive Modal Overlay with Smooth CSS Transitions */}
-      <div
-        className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition-all duration-300 ease-out ${
-          isModalOpen
-            ? 'opacity-100 pointer-events-auto backdrop-blur-md bg-black/70'
-            : 'opacity-0 pointer-events-none backdrop-blur-none bg-black/0'
-        }`}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="modal-title"
-      >
-        {/* Backdrop click dismiss */}
+      {isModalOpen && (
         <div
-          className="absolute inset-0"
-          onClick={() => toggleModal(false)}
-          aria-hidden="true"
-        />
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 transition-all duration-300 ease-out opacity-100 pointer-events-auto backdrop-blur-md bg-black/70"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-title"
+        >
+          {/* Backdrop click dismiss */}
+          <div
+            className="absolute inset-0"
+            onClick={() => toggleModal(false)}
+            aria-hidden="true"
+          />
 
         {/* Modal Window Card */}
         <div
@@ -459,6 +456,7 @@ export default function ModalNavbar({
           </div>
         </div>
       </div>
-    </>
-  );
+    )}
+  </>
+);
 }

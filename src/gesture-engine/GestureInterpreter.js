@@ -136,12 +136,14 @@ export class GestureInterpreter {
     const wrist = landmarks[HAND_LANDMARKS.WRIST];
     const tip = landmarks[tipIndex];
     const pip = landmarks[pipIndex];
+    const mcp = landmarks[mcpIndex];
 
     const distTipWrist = euclideanDistance(tip, wrist);
     const distPipWrist = euclideanDistance(pip, wrist);
+    const distTipMcp = euclideanDistance(tip, mcp);
 
-    // Tip must be farther from wrist than PIP and significantly extended past palm scale
-    return distTipWrist > distPipWrist * 1.12 && distTipWrist > palmScale * 1.25;
+    // Finger is considered extended if the tip is far from wrist and farther than the PIP joint
+    return distTipWrist > distPipWrist && distTipMcp > palmScale * 0.65;
   }
 
   /**
@@ -155,14 +157,14 @@ export class GestureInterpreter {
   _isThumbExtended(landmarks, palmScale) {
     const wrist = landmarks[HAND_LANDMARKS.WRIST];
     const thumbTip = landmarks[HAND_LANDMARKS.THUMB_TIP];
-    const thumbMcp = landmarks[HAND_LANDMARKS.THUMB_MCP];
-    const pinkyMcp = landmarks[HAND_LANDMARKS.PINKY_MCP];
+    const thumbIp = landmarks[HAND_LANDMARKS.THUMB_IP];
+    const indexMcp = landmarks[HAND_LANDMARKS.INDEX_MCP];
 
     const distTipWrist = euclideanDistance(thumbTip, wrist);
-    const distMcpWrist = euclideanDistance(thumbMcp, wrist);
-    const distTipPinky = euclideanDistance(thumbTip, pinkyMcp);
+    const distIpWrist = euclideanDistance(thumbIp, wrist);
+    const distTipIndexMcp = euclideanDistance(thumbTip, indexMcp);
 
-    return distTipWrist > distMcpWrist * 1.15 && distTipPinky > palmScale * 0.9;
+    return distTipWrist > distIpWrist && distTipIndexMcp > palmScale * 0.55;
   }
 
   /**
@@ -269,13 +271,12 @@ export class GestureInterpreter {
     this._lastExtendedFingerCount = extendedCount;
 
     // --- CLOSED FIST EVALUATION ---
-    // At most 1 extended finger (thumb or slightly lifted finger)
-    const isFistCandidate = extendedCount <= 1;
+    // A fist requires 0 extended fingers and NOT currently pinching
+    const isFistCandidate = extendedCount === 0 && !this.isPinching;
     if (isFistCandidate) {
       this._fistFrameCount++;
       if (this._fistFrameCount >= this.options.fistDebounceFrames && !this.isFist) {
         this.isFist = true;
-        // If previously open, close it first
         if (this.isOpen) {
           this.isOpen = false;
           this._openFrameCount = 0;

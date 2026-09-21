@@ -259,13 +259,13 @@ export default function HistoryAside({
   return (
     <>
       {/* Semi-transparent Backdrop Overlay */}
-      <div
-        className={`fixed inset-0 z-40 bg-black/60 backdrop-blur-xs transition-opacity duration-300 ${
-          isOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
-        }`}
-        onClick={() => toggleOpen(false)}
-        aria-hidden="true"
-      />
+      {isOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-xs transition-opacity duration-300 opacity-100 pointer-events-auto"
+          onClick={() => toggleOpen(false)}
+          aria-hidden="true"
+        />
+      )}
 
       {/* Floating Trigger Button (when closed) */}
       {!isOpen && (
