@@ -54,6 +54,17 @@ function DebugWebcamOverlay({ engineRef, isVisible }) {
         }
       }
       ctx.restore();
+
+      // Render gesture telemetry HUD directly on the canvas preview
+      ctx.save();
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+      ctx.fillRect(8, 8, 160, 48);
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = 'bold 12px monospace';
+      ctx.fillText(`SWIPE: ${window.__lastSwipe || 'NONE'}`, 14, 26);
+      ctx.fillStyle = window.__lastGestureState === 'FIST' ? '#f59e0b' : '#34d399';
+      ctx.fillText(`POSE: ${window.__lastGestureState || 'TRACKING'}`, 14, 44);
+      ctx.restore();
     });
 
     return () => {
@@ -135,8 +146,8 @@ function App() {
   useEffect(() => {
     // 1. Swipe discreto para scroll rápido
     const unsubSwipe = gestureEventBus.on('gesture:swipe', (data) => {
-      // Swipe UP (mano sube) -> scroll hacia abajo en la página
-      // Swipe DOWN (mano baja) -> scroll hacia arriba
+      window.__lastSwipe = data.direction;
+      setTimeout(() => { if (window.__lastSwipe === data.direction) window.__lastSwipe = 'NONE'; }, 1000);
       if (data.direction === 'UP') {
         window.scrollBy({ top: 450, behavior: 'smooth' });
       } else if (data.direction === 'DOWN') {
@@ -144,39 +155,42 @@ function App() {
       }
     });
 
-    // 2. Scroll continuo natural por zonas de pantalla: si la mano se mantiene en el 20% superior o inferior
+    // 2. Scroll continuo natural por zonas de pantalla
     let lastScrollTime = 0;
     const unsubMove = gestureEventBus.on('hand:move', (data) => {
       if (!data) return;
       const now = performance.now();
-      if (now - lastScrollTime < 30) return; // Limitar a ~30fps para suavidad
+      if (now - lastScrollTime < 30) return;
 
       const normY = data.y <= 1 ? data.y : data.y / window.innerHeight;
       
-      // Zona superior (arriba del 18% de la pantalla) -> scroll up
       if (normY < 0.18) {
         const intensity = (0.18 - normY) / 0.18;
         window.scrollBy({ top: -Math.round(intensity * 25), behavior: 'auto' });
         lastScrollTime = now;
-      }
-      // Zona inferior (debajo del 82% de la pantalla) -> scroll down
-      else if (normY > 0.82) {
+      } else if (normY > 0.82) {
         const intensity = (normY - 0.82) / 0.18;
         window.scrollBy({ top: Math.round(intensity * 25), behavior: 'auto' });
         lastScrollTime = now;
       }
     });
 
-    // 3. Abrir/Cerrar Modal al hacer Puño
+    // 3. Abrir/Cerrar Modal estrictamente al hacer Puño
     let lastToggleTime = 0;
     const unsubFist = gestureEventBus.on('gesture:fist', (data) => {
+      window.__lastGestureState = data.active ? 'FIST' : 'TRACKING';
       if (data.active) {
         const now = Date.now();
-        if (now - lastToggleTime > 1200) {
+        if (now - lastToggleTime > 1500) {
           gestureEventBus.emit('ui:toggle-modal');
           lastToggleTime = now;
         }
       }
+    });
+
+    const unsubPinch = gestureEventBus.on('gesture:pinch', (data) => {
+      if (data.active) window.__lastGestureState = 'PINCH';
+      else if (window.__lastGestureState === 'PINCH') window.__lastGestureState = 'TRACKING';
     });
     
     // 4. Fallback de scroll por teclado/driver
@@ -188,6 +202,7 @@ function App() {
       unsubSwipe();
       unsubMove();
       unsubFist();
+      unsubPinch();
       unsubUiScroll();
     };
   }, []);

@@ -140,10 +140,10 @@ export class GestureInterpreter {
 
     const distTipWrist = euclideanDistance(tip, wrist);
     const distPipWrist = euclideanDistance(pip, wrist);
-    const distTipMcp = euclideanDistance(tip, mcp);
+    const distMcpWrist = euclideanDistance(mcp, wrist);
 
-    // Finger is considered extended if the tip is far from wrist and farther than the PIP joint
-    return distTipWrist > distPipWrist && distTipMcp > palmScale * 0.65;
+    // In a fist, fingertips curl in and their distance to wrist is less than or close to PIP/MCP
+    return distTipWrist > distPipWrist * 1.05 && distTipWrist > distMcpWrist * 1.15;
   }
 
   /**
@@ -157,14 +157,14 @@ export class GestureInterpreter {
   _isThumbExtended(landmarks, palmScale) {
     const wrist = landmarks[HAND_LANDMARKS.WRIST];
     const thumbTip = landmarks[HAND_LANDMARKS.THUMB_TIP];
-    const thumbIp = landmarks[HAND_LANDMARKS.THUMB_IP];
+    const thumbMcp = landmarks[HAND_LANDMARKS.THUMB_MCP];
     const indexMcp = landmarks[HAND_LANDMARKS.INDEX_MCP];
 
     const distTipWrist = euclideanDistance(thumbTip, wrist);
-    const distIpWrist = euclideanDistance(thumbIp, wrist);
-    const distTipIndexMcp = euclideanDistance(thumbTip, indexMcp);
+    const distMcpWrist = euclideanDistance(thumbMcp, wrist);
+    const distTipIndex = euclideanDistance(thumbTip, indexMcp);
 
-    return distTipWrist > distIpWrist && distTipIndexMcp > palmScale * 0.55;
+    return distTipWrist > distMcpWrist * 1.15 && distTipIndex > palmScale * 0.55;
   }
 
   /**
@@ -220,59 +220,28 @@ export class GestureInterpreter {
     const middleMcp = landmarks[HAND_LANDMARKS.MIDDLE_MCP];
     const palmScale = euclideanDistance(wrist, middleMcp);
 
+    // Check individual finger curl: in a real closed fist, all 4 non-thumb fingertips
+    // curl down into the palm so tip is closer to wrist than PIP joint
+    const indexCurled = euclideanDistance(landmarks[HAND_LANDMARKS.INDEX_TIP], wrist) < euclideanDistance(landmarks[HAND_LANDMARKS.INDEX_PIP], wrist);
+    const middleCurled = euclideanDistance(landmarks[HAND_LANDMARKS.MIDDLE_TIP], wrist) < euclideanDistance(landmarks[HAND_LANDMARKS.MIDDLE_PIP], wrist);
+    const ringCurled = euclideanDistance(landmarks[HAND_LANDMARKS.RING_TIP], wrist) < euclideanDistance(landmarks[HAND_LANDMARKS.RING_PIP], wrist);
+    const pinkyCurled = euclideanDistance(landmarks[HAND_LANDMARKS.PINKY_TIP], wrist) < euclideanDistance(landmarks[HAND_LANDMARKS.PINKY_PIP], wrist);
+
     // Count extended fingers
     let extendedCount = 0;
     if (this._isThumbExtended(landmarks, palmScale)) extendedCount++;
-    if (
-      this._isFingerExtended(
-        landmarks,
-        HAND_LANDMARKS.INDEX_TIP,
-        HAND_LANDMARKS.INDEX_PIP,
-        HAND_LANDMARKS.INDEX_MCP,
-        palmScale
-      )
-    ) {
-      extendedCount++;
-    }
-    if (
-      this._isFingerExtended(
-        landmarks,
-        HAND_LANDMARKS.MIDDLE_TIP,
-        HAND_LANDMARKS.MIDDLE_PIP,
-        HAND_LANDMARKS.MIDDLE_MCP,
-        palmScale
-      )
-    ) {
-      extendedCount++;
-    }
-    if (
-      this._isFingerExtended(
-        landmarks,
-        HAND_LANDMARKS.RING_TIP,
-        HAND_LANDMARKS.RING_PIP,
-        HAND_LANDMARKS.RING_MCP,
-        palmScale
-      )
-    ) {
-      extendedCount++;
-    }
-    if (
-      this._isFingerExtended(
-        landmarks,
-        HAND_LANDMARKS.PINKY_TIP,
-        HAND_LANDMARKS.PINKY_PIP,
-        HAND_LANDMARKS.PINKY_MCP,
-        palmScale
-      )
-    ) {
-      extendedCount++;
-    }
+    if (!indexCurled) extendedCount++;
+    if (!middleCurled) extendedCount++;
+    if (!ringCurled) extendedCount++;
+    if (!pinkyCurled) extendedCount++;
 
     this._lastExtendedFingerCount = extendedCount;
 
-    // --- CLOSED FIST EVALUATION ---
-    // A fist requires 0 extended fingers and NOT currently pinching
-    const isFistCandidate = extendedCount === 0 && !this.isPinching;
+    // --- STRICT CLOSED FIST EVALUATION ---
+    // ALL 4 primary fingers MUST be curled in towards the palm, not pinching, and thumb must not be outstretched
+    const thumbExtended = this._isThumbExtended(landmarks, palmScale);
+    const isFistCandidate = indexCurled && middleCurled && ringCurled && pinkyCurled && !thumbExtended && !this.isPinching;
+
     if (isFistCandidate) {
       this._fistFrameCount++;
       if (this._fistFrameCount >= this.options.fistDebounceFrames && !this.isFist) {
