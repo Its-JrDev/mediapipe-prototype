@@ -1,0 +1,75 @@
+{
+  "id": "5c899624-e94e-4330-9cef-28e1b9922e89",
+  "ok": true,
+  "result": {
+    "runId": "run_0cfef82e79a6",
+    "taskId": "task_c790895583fb",
+    "dispatchId": "ctx_9a01c6a65650",
+    "state": "failed",
+    "stage": "agent_readiness",
+    "failedStage": "agent_readiness",
+    "lastError": "Agent startup blocked: codex-update-prompt",
+    "setup": {
+      "requested": "not_applicable",
+      "effective": "not_applicable",
+      "source": "existing_worktree",
+      "hookFound": false,
+      "startupPolicy": "start-immediately",
+      "state": "not_applicable"
+    },
+    "launch": {
+      "requested": {
+        "agent": "codex",
+        "model": null,
+        "effort": null
+      },
+      "effective": {
+        "agent": "codex",
+        "model": null,
+        "effort": null
+      }
+    },
+    "mode": {
+      "mode": "terminal",
+      "preferred": "terminal",
+      "reason": "user_default",
+      "detail": "Started a terminal agent worker, the default for new agent tabs in your settings."
+    },
+    "effects": [
+      {
+        "kind": "worktree",
+        "action": "reused",
+        "id": "64b059a8-cab8-41ba-abbf-fa88e4b7e5ff::/home/jr/Development/mediapipe-prototype"
+      },
+      {
+        "kind": "setup",
+        "action": "not_applicable",
+        "state": "not_applicable"
+      },
+      {
+        "kind": "terminal",
+        "role": "agent",
+        "action": "created",
+        "id": "term_a8c0c1e5-f16e-41e9-8d0e-4e9bdf79f99e",
+        "surface": "visible"
+      }
+    ],
+    "residualResources": [
+      {
+        "kind": "terminal",
+        "role": "agent",
+        "action": "created",
+        "id": "term_a8c0c1e5-f16e-41e9-8d0e-4e9bdf79f99e",
+        "surface": "visible"
+      }
+    ],
+    "recovery": "This start created a terminal that never ran the Task. Close it with: orca orchestration worker-release --dispatch ctx_9a01c6a65650",
+    "mutation": {
+      "requestId": "b558b2d1-96e8-4754-8dd1-ec5ee3951184",
+      "replayed": false
+    }
+  },
+  "_meta": {
+    "runtimeId": "d5af9eaf-f705-4d88-b1d4-3ace3a4f7ec1"
+  }
+}
