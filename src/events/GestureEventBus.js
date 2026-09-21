@@ -24,6 +24,7 @@ export const GESTURE_EVENTS = Object.freeze({
   GESTURE_FIST: 'gesture:fist',
   GESTURE_OPEN: 'gesture:open',
   GESTURE_SWIPE: 'gesture:swipe',
+  GESTURE_FLIP: 'gesture:flip',
   UI_SCROLL: 'ui:scroll',
   UI_TOGGLE_MODAL: 'ui:toggle-modal',
   UI_TOGGLE_ASIDE: 'ui:toggle-aside',

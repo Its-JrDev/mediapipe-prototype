@@ -95,10 +95,15 @@ export class GestureInterpreter {
     this.isPinching = false;
     this.isFist = false;
     this.isOpen = false;
+    this.currentFacing = 'UNKNOWN'; // 'PALM' | 'BACK' | 'UNKNOWN'
+    this._lastFacing = null;
+    this._lastFlipTimestamp = 0;
 
     // Debounce counters
     this._fistFrameCount = 0;
     this._openFrameCount = 0;
+    this._facingFrameCount = 0;
+    this._candidateFacing = null;
 
     // Swipe motion tracking buffer
     /** @type {Array<{ x: number, y: number, time: number }>} */
@@ -350,6 +355,73 @@ export class GestureInterpreter {
   }
 
   /**
+   * Detects hand flipping (showing palm vs showing back of hand).
+   * Uses cross product of palm vectors (Wrist -> Index MCP) x (Wrist -> Pinky MCP)
+   * to determine the surface normal Z direction.
+   *
+   * @param {Array<{ x: number, y: number, z?: number }>} landmarks
+   * @param {number} timestamp
+   * @private
+   */
+  _evaluateFlip(landmarks, timestamp) {
+    const wrist = landmarks[HAND_LANDMARKS.WRIST];
+    const indexMcp = landmarks[HAND_LANDMARKS.INDEX_MCP];
+    const pinkyMcp = landmarks[HAND_LANDMARKS.PINKY_MCP];
+
+    if (!wrist || !indexMcp || !pinkyMcp) return;
+
+    // Vector 1: Wrist -> Index MCP
+    const v1 = {
+      x: indexMcp.x - wrist.x,
+      y: indexMcp.y - wrist.y,
+      z: (indexMcp.z || 0) - (wrist.z || 0),
+    };
+
+    // Vector 2: Wrist -> Pinky MCP
+    const v2 = {
+      x: pinkyMcp.x - wrist.x,
+      y: pinkyMcp.y - wrist.y,
+      z: (pinkyMcp.z || 0) - (wrist.z || 0),
+    };
+
+    // Palm normal Z component = (v1.x * v2.y - v1.y * v2.x)
+    const normalZ = v1.x * v2.y - v1.y * v2.x;
+
+    // Strong threshold to prevent flickering during edge-on rotations
+    let detectedFacing = 'UNKNOWN';
+    if (normalZ > 0.008) {
+      detectedFacing = 'PALM';
+    } else if (normalZ < -0.008) {
+      detectedFacing = 'BACK';
+    }
+
+    if (detectedFacing !== 'UNKNOWN') {
+      if (detectedFacing === this._candidateFacing) {
+        this._facingFrameCount++;
+        if (this._facingFrameCount >= 3) { // Require 3 stable frames
+          if (this.currentFacing !== detectedFacing) {
+            const previousFacing = this.currentFacing;
+            this.currentFacing = detectedFacing;
+
+            // If we transitioned from a known orientation to the opposite orientation
+            if (previousFacing !== 'UNKNOWN' && (timestamp - this._lastFlipTimestamp > 600)) {
+              this._lastFlipTimestamp = timestamp;
+              this._emitEvent(GESTURE_EVENTS.GESTURE_FLIP, {
+                facing: detectedFacing,
+                from: previousFacing,
+                timestamp,
+              });
+            }
+          }
+        }
+      } else {
+        this._candidateFacing = detectedFacing;
+        this._facingFrameCount = 1;
+      }
+    }
+  }
+
+  /**
    * Main processing method. Evaluates gestures on the tracked hand.
    *
    * @param {object|null} trackedHand - Output from HandTracker.process()
@@ -374,6 +446,9 @@ export class GestureInterpreter {
 
     // 3. Evaluate Swipe (Motion vector over time)
     this._evaluateSwipe(currentX, currentY, timestamp);
+
+    // 4. Evaluate Flip (Rotating hand: palm <-> back)
+    this._evaluateFlip(landmarks, timestamp);
   }
 
   /**

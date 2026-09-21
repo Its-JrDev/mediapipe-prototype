@@ -57,13 +57,15 @@ function DebugWebcamOverlay({ engineRef, isVisible }) {
 
       // Render gesture telemetry HUD directly on the canvas preview
       ctx.save();
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-      ctx.fillRect(8, 8, 160, 48);
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+      ctx.fillRect(8, 8, 175, 62);
       ctx.fillStyle = '#38bdf8';
-      ctx.font = 'bold 12px monospace';
-      ctx.fillText(`SWIPE: ${window.__lastSwipe || 'NONE'}`, 14, 26);
-      ctx.fillStyle = window.__lastGestureState === 'FIST' ? '#f59e0b' : '#34d399';
-      ctx.fillText(`POSE: ${window.__lastGestureState || 'TRACKING'}`, 14, 44);
+      ctx.font = 'bold 11px monospace';
+      ctx.fillText(`SWIPE: ${window.__lastSwipe || 'NONE'}`, 14, 24);
+      ctx.fillStyle = window.__lastFlip ? '#a855f7' : '#94a3b8';
+      ctx.fillText(`FLIP: ${window.__lastFlip || 'READY (Turn Hand)'}`, 14, 42);
+      ctx.fillStyle = '#34d399';
+      ctx.fillText(`STATUS: ${window.__lastGestureState || 'TRACKING'}`, 14, 60);
       ctx.restore();
     });
 
@@ -181,16 +183,17 @@ function App() {
       lastY = currentY;
     });
 
-    // 3. Abrir/Cerrar Modal estrictamente al hacer Puño
-    let lastToggleTime = 0;
-    const unsubFist = gestureEventBus.on('gesture:fist', (data) => {
-      window.__lastGestureState = data.active ? 'FIST' : 'TRACKING';
-      if (data.active) {
-        const now = Date.now();
-        if (now - lastToggleTime > 1600) {
-          gestureEventBus.emit('ui:toggle-modal');
-          lastToggleTime = now;
-        }
+    // 3. Abrir/Cerrar Modal por Gesto de Dar Vuelta a la Mano (Flip Hand)
+    let lastFlipToggleTime = 0;
+    const unsubFlip = gestureEventBus.on('gesture:flip', (data) => {
+      window.__lastFlip = `${data.from} ➔ ${data.facing}`;
+      window.__lastGestureState = `FLIP (${data.facing})`;
+      setTimeout(() => { if (window.__lastFlip === `${data.from} ➔ ${data.facing}`) window.__lastFlip = null; }, 1500);
+
+      const now = Date.now();
+      if (now - lastFlipToggleTime > 800) {
+        gestureEventBus.emit('ui:toggle-modal');
+        lastFlipToggleTime = now;
       }
     });
 
@@ -207,7 +210,7 @@ function App() {
     return () => {
       unsubSwipe();
       unsubMove();
-      unsubFist();
+      unsubFlip();
       unsubPinch();
       unsubUiScroll();
     };
@@ -241,8 +244,8 @@ function App() {
             Gestos en Vivo
           </h1>
           <p className="text-2xl text-zinc-400 mb-16 leading-relaxed max-w-3xl">
-            1. Haz un <strong className="text-white bg-white/10 px-2 py-1 rounded">Puño</strong> cerrado para abrir el menú Modal.<br/><br/>
-            2. Mueve tu mano rápido <strong className="text-white bg-white/10 px-2 py-1 rounded">hacia Arriba o Abajo (Swipe)</strong> para hacer scroll por la página.<br/><br/>
+            1. Dale la <strong className="text-white bg-white/10 px-2 py-1 rounded">Vuelta a la Mano (Palma ↔ Dorso)</strong> para abrir o cerrar el Modal.<br/><br/>
+            2. Mueve tu mano <strong className="text-white bg-white/10 px-2 py-1 rounded">hacia Arriba o hacia Abajo</strong> para hacer scroll por la página.<br/><br/>
             3. Une tu <strong className="text-white bg-white/10 px-2 py-1 rounded">Pulgar e Índice (Pinch)</strong> para hacer Touch/Click en las tarjetas.
           </p>
 
