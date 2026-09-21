@@ -1,122 +1,97 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import './App.css'
+import React, { useEffect, useState, useRef } from 'react';
+import GestureCursor from './components/GestureCursor';
+import BeforeAfterSlider from './components/BeforeAfterSlider';
+import HistoryAside from './components/HistoryAside';
+import ModalNavbar from './components/ModalNavbar';
+import GestureEngine from './gesture-engine/index.js';
+import MockGestureDriver from './gesture-engine/MockGestureDriver.js';
+import gestureEventBus from './events/GestureEventBus.js';
+
+import './App.css'; // Mantenemos el estilo base si hay, aunque los componentes tienen Tailwind
 
 function App() {
-  const [count, setCount] = useState(0)
+  const [engineState, setEngineState] = useState('initializing'); // 'initializing', 'ready', 'error'
+  const engineRef = useRef(null);
+  const driverRef = useRef(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    const simulateGestures = import.meta.env.VITE_SIMULATE_GESTURES === 'true';
+
+    async function initSystem() {
+      try {
+        if (simulateGestures) {
+          console.log("Starting Mock Gesture Driver...");
+          driverRef.current = new MockGestureDriver(gestureEventBus);
+          driverRef.current.start();
+          if (isMounted) setEngineState('ready');
+        } else {
+          console.log("Initializing MediaPipe Gesture Engine...");
+          engineRef.current = new GestureEngine({ eventBus: gestureEventBus });
+          await engineRef.current.initialize();
+          if (isMounted) {
+            await engineRef.current.start();
+            setEngineState('ready');
+          }
+        }
+      } catch (err) {
+        console.error("Failed to initialize engine:", err);
+        if (isMounted) setEngineState('error');
+      }
+    }
+
+    initSystem();
+
+    return () => {
+      isMounted = false;
+      if (driverRef.current) {
+        // Asumiendo que MockGestureDriver tiene un método stop o dispose
+        if (typeof driverRef.current.stop === 'function') driverRef.current.stop();
+      }
+      if (engineRef.current) {
+        engineRef.current.cleanup();
+      }
+    };
+  }, []);
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+    <div className="w-screen h-screen bg-gray-900 text-white overflow-hidden relative font-sans">
+      {/* UI Components Overlay */}
+      <ModalNavbar />
+      
+      {/* Main Content Area */}
+      <main className="w-full h-full flex flex-col items-center justify-center pt-16">
+        {engineState === 'initializing' && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-gray-900/80 backdrop-blur-sm">
+            <div className="text-center">
+              <div className="w-12 h-12 border-4 border-fuchsia-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+              <p className="text-lg font-medium text-gray-200">Initializing Gesture Engine...</p>
+            </div>
+          </div>
+        )}
+        
+        {engineState === 'error' && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-gray-900/80 backdrop-blur-sm">
+            <div className="text-center bg-red-900/50 p-6 rounded-lg border border-red-500">
+              <p className="text-xl font-bold text-red-400 mb-2">Failed to start Vision Engine</p>
+              <p className="text-sm text-gray-300">Check webcam permissions or try setting VITE_SIMULATE_GESTURES=true in .env</p>
+            </div>
+          </div>
+        )}
 
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
+        {/* Demo Content */}
+        <div className="relative w-full max-w-5xl h-[600px] flex items-center justify-center p-8">
+          <BeforeAfterSlider />
         </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
+      </main>
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+      {/* Slide-out History */}
+      <HistoryAside />
+      
+      {/* Cinematic Virtual Cursor */}
+      <GestureCursor />
+    </div>
+  );
 }
 
-export default App
+export default App;
