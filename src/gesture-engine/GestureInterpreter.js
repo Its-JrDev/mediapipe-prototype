@@ -132,39 +132,40 @@ export class GestureInterpreter {
    * @returns {boolean}
    * @private
    */
-  _isFingerExtended(landmarks, tipIndex, pipIndex, mcpIndex, palmScale) {
-    const wrist = landmarks[HAND_LANDMARKS.WRIST];
+  /**
+   * Evaluates if a finger is curled towards its own knuckle (MCP) using 3D coordinates.
+   * In an open hand, tip-to-MCP distance is large (> 1.1 * palmScale).
+   * In a curled fist, tip is folded close to MCP (< 0.75 * palmScale).
+   *
+   * @param {Array<{ x: number, y: number, z?: number }>} landmarks
+   * @param {number} tipIndex
+   * @param {number} mcpIndex
+   * @param {number} palmScale
+   * @returns {boolean} True if finger is tightly curled into palm
+   * @private
+   */
+  _isFingerCurled(landmarks, tipIndex, mcpIndex, palmScale) {
     const tip = landmarks[tipIndex];
-    const pip = landmarks[pipIndex];
     const mcp = landmarks[mcpIndex];
-
-    const distTipWrist = euclideanDistance(tip, wrist);
-    const distPipWrist = euclideanDistance(pip, wrist);
-    const distMcpWrist = euclideanDistance(mcp, wrist);
-
-    // In a fist, fingertips curl in and their distance to wrist is less than or close to PIP/MCP
-    return distTipWrist > distPipWrist * 1.05 && distTipWrist > distMcpWrist * 1.15;
+    const distTipMcp = euclideanDistance(tip, mcp, true);
+    return distTipMcp < palmScale * 0.72;
   }
 
   /**
-   * Evaluates if the thumb is extended.
+   * Evaluates if the thumb is curled against the palm/index MCP.
    *
    * @param {Array<{ x: number, y: number, z?: number }>} landmarks
    * @param {number} palmScale
-   * @returns {boolean}
+   * @returns {boolean} True if thumb is tucked in
    * @private
    */
-  _isThumbExtended(landmarks, palmScale) {
-    const wrist = landmarks[HAND_LANDMARKS.WRIST];
+  _isThumbCurled(landmarks, palmScale) {
     const thumbTip = landmarks[HAND_LANDMARKS.THUMB_TIP];
-    const thumbMcp = landmarks[HAND_LANDMARKS.THUMB_MCP];
     const indexMcp = landmarks[HAND_LANDMARKS.INDEX_MCP];
-
-    const distTipWrist = euclideanDistance(thumbTip, wrist);
-    const distMcpWrist = euclideanDistance(thumbMcp, wrist);
-    const distTipIndex = euclideanDistance(thumbTip, indexMcp);
-
-    return distTipWrist > distMcpWrist * 1.15 && distTipIndex > palmScale * 0.55;
+    const middleMcp = landmarks[HAND_LANDMARKS.MIDDLE_MCP];
+    const distToIndexMcp = euclideanDistance(thumbTip, indexMcp, true);
+    const distToMiddleMcp = euclideanDistance(thumbTip, middleMcp, true);
+    return distToIndexMcp < palmScale * 0.65 || distToMiddleMcp < palmScale * 0.75;
   }
 
   /**
@@ -179,7 +180,7 @@ export class GestureInterpreter {
     const thumbTip = landmarks[HAND_LANDMARKS.THUMB_TIP];
     const indexTip = landmarks[HAND_LANDMARKS.INDEX_TIP];
 
-    const distance = euclideanDistance(thumbTip, indexTip);
+    const distance = euclideanDistance(thumbTip, indexTip, true);
     this._lastPinchDistance = distance;
 
     // Pinch midpoint coordinates
@@ -210,7 +211,7 @@ export class GestureInterpreter {
   }
 
   /**
-   * Detects open hand and closed fist gestures using fingertip distances to wrist base (0).
+   * Detects open hand and closed fist gestures using fingertip-to-knuckle 3D biomechanics.
    *
    * @param {Array<{ x: number, y: number, z?: number }>} landmarks
    * @private
@@ -218,29 +219,28 @@ export class GestureInterpreter {
   _evaluateHandPose(landmarks) {
     const wrist = landmarks[HAND_LANDMARKS.WRIST];
     const middleMcp = landmarks[HAND_LANDMARKS.MIDDLE_MCP];
-    const palmScale = euclideanDistance(wrist, middleMcp);
+    const palmScale = euclideanDistance(wrist, middleMcp, true) || 0.1;
 
-    // Check individual finger curl: in a real closed fist, all 4 non-thumb fingertips
-    // curl down into the palm so tip is closer to wrist than PIP joint
-    const indexCurled = euclideanDistance(landmarks[HAND_LANDMARKS.INDEX_TIP], wrist) < euclideanDistance(landmarks[HAND_LANDMARKS.INDEX_PIP], wrist);
-    const middleCurled = euclideanDistance(landmarks[HAND_LANDMARKS.MIDDLE_TIP], wrist) < euclideanDistance(landmarks[HAND_LANDMARKS.MIDDLE_PIP], wrist);
-    const ringCurled = euclideanDistance(landmarks[HAND_LANDMARKS.RING_TIP], wrist) < euclideanDistance(landmarks[HAND_LANDMARKS.RING_PIP], wrist);
-    const pinkyCurled = euclideanDistance(landmarks[HAND_LANDMARKS.PINKY_TIP], wrist) < euclideanDistance(landmarks[HAND_LANDMARKS.PINKY_PIP], wrist);
+    // Check individual finger curl: all 4 fingers must curl to their knuckles
+    const indexCurled = this._isFingerCurled(landmarks, HAND_LANDMARKS.INDEX_TIP, HAND_LANDMARKS.INDEX_MCP, palmScale);
+    const middleCurled = this._isFingerCurled(landmarks, HAND_LANDMARKS.MIDDLE_TIP, HAND_LANDMARKS.MIDDLE_MCP, palmScale);
+    const ringCurled = this._isFingerCurled(landmarks, HAND_LANDMARKS.RING_TIP, HAND_LANDMARKS.RING_MCP, palmScale);
+    const pinkyCurled = this._isFingerCurled(landmarks, HAND_LANDMARKS.PINKY_TIP, HAND_LANDMARKS.PINKY_MCP, palmScale);
+    const thumbCurled = this._isThumbCurled(landmarks, palmScale);
 
-    // Count extended fingers
-    let extendedCount = 0;
-    if (this._isThumbExtended(landmarks, palmScale)) extendedCount++;
-    if (!indexCurled) extendedCount++;
-    if (!middleCurled) extendedCount++;
-    if (!ringCurled) extendedCount++;
-    if (!pinkyCurled) extendedCount++;
+    // Count curled and extended fingers
+    let curledCount = 0;
+    if (indexCurled) curledCount++;
+    if (middleCurled) curledCount++;
+    if (ringCurled) curledCount++;
+    if (pinkyCurled) curledCount++;
 
+    const extendedCount = 5 - (curledCount + (thumbCurled ? 1 : 0));
     this._lastExtendedFingerCount = extendedCount;
 
     // --- STRICT CLOSED FIST EVALUATION ---
-    // ALL 4 primary fingers MUST be curled in towards the palm, not pinching, and thumb must not be outstretched
-    const thumbExtended = this._isThumbExtended(landmarks, palmScale);
-    const isFistCandidate = indexCurled && middleCurled && ringCurled && pinkyCurled && !thumbExtended && !this.isPinching;
+    // A true fist requires ALL 4 main fingers tightly curled into knuckles, thumb tucked, and NOT pinching
+    const isFistCandidate = curledCount === 4 && thumbCurled && !this.isPinching;
 
     if (isFistCandidate) {
       this._fistFrameCount++;
@@ -262,8 +262,8 @@ export class GestureInterpreter {
     }
 
     // --- OPEN HAND EVALUATION ---
-    // At least 4 fingers fully extended, and not pinching
-    const isOpenCandidate = extendedCount >= 4 && !this.isPinching;
+    // At least 4 fingers uncurled and not pinching
+    const isOpenCandidate = curledCount <= 1 && !thumbCurled && !this.isPinching;
     if (isOpenCandidate) {
       this._openFrameCount++;
       if (this._openFrameCount >= this.options.openDebounceFrames && !this.isOpen) {
@@ -285,7 +285,7 @@ export class GestureInterpreter {
   }
 
   /**
-   * Detects swipe gestures across time window (delta X/Y over time).
+   * Detects swipe gestures across time window with dedicated vertical sensitivity.
    *
    * @param {number} x - Normalized X coordinate
    * @param {number} y - Normalized Y coordinate
@@ -293,22 +293,18 @@ export class GestureInterpreter {
    * @private
    */
   _evaluateSwipe(x, y, timestamp) {
-    // Check cooldown period
     if (timestamp - this._lastSwipeTimestamp < this.options.swipeCooldownMs) {
       return;
     }
 
-    // Append current position to sliding window
     this._swipeHistory.push({ x, y, time: timestamp });
 
-    // Prune points outside window
     const cutoffTime = timestamp - this.options.swipeWindowMs;
     while (this._swipeHistory.length > 0 && this._swipeHistory[0].time < cutoffTime) {
       this._swipeHistory.shift();
     }
 
-    // Need at least 4 data points spanning at least 60ms to evaluate trajectory
-    if (this._swipeHistory.length < 4) {
+    if (this._swipeHistory.length < 3) {
       return;
     }
 
@@ -316,7 +312,7 @@ export class GestureInterpreter {
     const latest = this._swipeHistory[this._swipeHistory.length - 1];
 
     const dtSeconds = (latest.time - oldest.time) / 1000;
-    if (dtSeconds < 0.06) {
+    if (dtSeconds < 0.05) {
       return;
     }
 
@@ -333,26 +329,18 @@ export class GestureInterpreter {
 
     let detectedDirection = null;
 
-    // Horizontal swipe check: |deltaX| dominant over |deltaY|
-    if (
-      absDx >= this.options.minSwipeDistance &&
-      absVx >= this.options.minSwipeVelocity &&
-      absVx > absVy * 1.25
-    ) {
-      detectedDirection = dx > 0 ? SWIPE_DIRECTIONS.RIGHT : SWIPE_DIRECTIONS.LEFT;
-    }
-    // Vertical swipe check: |deltaY| dominant over |deltaX|
-    else if (
-      absDy >= this.options.minSwipeDistance &&
-      absVy >= this.options.minSwipeVelocity &&
-      absVy > absVx * 1.25
-    ) {
+    // Vertical swipe: fast upward or downward hand motion
+    if (absDy >= this.options.minSwipeDistance && absVy >= this.options.minSwipeVelocity) {
       detectedDirection = dy > 0 ? SWIPE_DIRECTIONS.DOWN : SWIPE_DIRECTIONS.UP;
+    }
+    // Horizontal swipe: left or right hand motion
+    else if (absDx >= this.options.minSwipeDistance && absVx >= this.options.minSwipeVelocity && absVx > absVy * 1.1) {
+      detectedDirection = dx > 0 ? SWIPE_DIRECTIONS.RIGHT : SWIPE_DIRECTIONS.LEFT;
     }
 
     if (detectedDirection) {
       this._lastSwipeTimestamp = timestamp;
-      this._swipeHistory = []; // Clear history to prevent duplicate triggers
+      this._swipeHistory = [];
 
       this._emitEvent(GESTURE_EVENTS.GESTURE_SWIPE, {
         direction: detectedDirection,

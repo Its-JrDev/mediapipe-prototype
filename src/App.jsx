@@ -113,12 +113,13 @@ function App() {
           engineRef.current = new GestureEngine({ 
             eventBus: gestureEventBus,
             interpreterOptions: {
-              pinchThreshold: 0.065,          // Distancia clara para pinch sin activarse por accidente
-              pinchReleaseThreshold: 0.085,   // Histeresis limpia
-              fistDebounceFrames: 4,          // Requiere 4 frames estables de puño para evitar falsos positivos
-              minSwipeDistance: 0.10,         // Distancia moderada para no confundir con movimientos casuales
-              minSwipeVelocity: 0.45,
-              swipeCooldownMs: 500,
+              pinchThreshold: 0.065,
+              pinchReleaseThreshold: 0.085,
+              fistDebounceFrames: 5,          // Exige 5 frames seguidos de puño cerrado total
+              minSwipeDistance: 0.06,         // Gesto más corto para swipe fácil
+              minSwipeVelocity: 0.28,         // Velocidad accesible para swipe vertical
+              swipeCooldownMs: 380,           // Cooldown ágil
+              swipeWindowMs: 250,
             }
           });
           await engineRef.current.initialize();
@@ -144,35 +145,40 @@ function App() {
 
   // Mapeo de gestos a acciones de la UI
   useEffect(() => {
-    // 1. Swipe discreto para scroll rápido
+    // 1. Swipe discreto de lanzamiento rápido (Arriba / Abajo)
     const unsubSwipe = gestureEventBus.on('gesture:swipe', (data) => {
       window.__lastSwipe = data.direction;
       setTimeout(() => { if (window.__lastSwipe === data.direction) window.__lastSwipe = 'NONE'; }, 1000);
+      
+      // Gesto hacia ARRIBA -> Desplaza la página hacia ARRIBA
       if (data.direction === 'UP') {
-        window.scrollBy({ top: 450, behavior: 'smooth' });
-      } else if (data.direction === 'DOWN') {
-        window.scrollBy({ top: -450, behavior: 'smooth' });
+        window.scrollBy({ top: -550, behavior: 'smooth' });
+      } 
+      // Gesto hacia ABAJO -> Desplaza la página hacia ABAJO
+      else if (data.direction === 'DOWN') {
+        window.scrollBy({ top: 550, behavior: 'smooth' });
       }
     });
 
-    // 2. Scroll continuo natural por zonas de pantalla
+    // 2. Scroll continuo por arrastre vertical de la mano (Motion Tracking)
+    let lastY = null;
     let lastScrollTime = 0;
     const unsubMove = gestureEventBus.on('hand:move', (data) => {
       if (!data) return;
       const now = performance.now();
-      if (now - lastScrollTime < 30) return;
+      const currentY = data.y <= 1 ? data.y * window.innerHeight : data.y;
 
-      const normY = data.y <= 1 ? data.y : data.y / window.innerHeight;
-      
-      if (normY < 0.18) {
-        const intensity = (0.18 - normY) / 0.18;
-        window.scrollBy({ top: -Math.round(intensity * 25), behavior: 'auto' });
-        lastScrollTime = now;
-      } else if (normY > 0.82) {
-        const intensity = (normY - 0.82) / 0.18;
-        window.scrollBy({ top: Math.round(intensity * 25), behavior: 'auto' });
-        lastScrollTime = now;
+      // Si la mano se mueve verticalmente mientras está abierta (sin pinza ni puño)
+      if (lastY !== null && window.__lastGestureState !== 'FIST' && window.__lastGestureState !== 'PINCH') {
+        const deltaY = currentY - lastY;
+        
+        // Si hay desplazamiento vertical intencional continuo
+        if (Math.abs(deltaY) > 8 && (now - lastScrollTime > 32)) {
+          window.scrollBy({ top: deltaY * 1.8, behavior: 'auto' });
+          lastScrollTime = now;
+        }
       }
+      lastY = currentY;
     });
 
     // 3. Abrir/Cerrar Modal estrictamente al hacer Puño
@@ -181,7 +187,7 @@ function App() {
       window.__lastGestureState = data.active ? 'FIST' : 'TRACKING';
       if (data.active) {
         const now = Date.now();
-        if (now - lastToggleTime > 1500) {
+        if (now - lastToggleTime > 1600) {
           gestureEventBus.emit('ui:toggle-modal');
           lastToggleTime = now;
         }
