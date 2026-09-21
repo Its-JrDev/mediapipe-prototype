@@ -95,6 +95,7 @@ export class GestureInterpreter {
     this.isPinching = false;
     this.isFist = false;
     this.isOpen = false;
+    this.isTwoFingerScroll = false;
     this.currentFacing = 'UNKNOWN'; // 'PALM' | 'BACK' | 'UNKNOWN'
     this._lastFacing = null;
     this._lastFlipTimestamp = 0;
@@ -285,6 +286,21 @@ export class GestureInterpreter {
       if (this.isOpen) {
         this.isOpen = false;
         this._emitEvent(GESTURE_EVENTS.GESTURE_OPEN, { active: false });
+      }
+    }
+
+    // --- TWO-FINGER SCROLL POSE EVALUATION (Index + Ring/Middle extended, Thumb & Pinky curled) ---
+    // User requested: scroll solo con 2 dedos
+    const twoFingersExtended = !indexCurled && (!middleCurled || !ringCurled) && pinkyCurled;
+    if (twoFingersExtended && !this.isPinching && !isFistCandidate) {
+      if (!this.isTwoFingerScroll) {
+        this.isTwoFingerScroll = true;
+        this._emitEvent('gesture:scroll-mode', { active: true });
+      }
+    } else {
+      if (this.isTwoFingerScroll) {
+        this.isTwoFingerScroll = false;
+        this._emitEvent('gesture:scroll-mode', { active: false });
       }
     }
   }

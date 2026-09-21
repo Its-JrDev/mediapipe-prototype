@@ -149,20 +149,30 @@ function App() {
   useEffect(() => {
     // 1. Swipe discreto de lanzamiento rápido (Arriba / Abajo)
     const unsubSwipe = gestureEventBus.on('gesture:swipe', (data) => {
+      // Solo permitir swipe si está en modo 2 dedos
+      if (!window.__isScrollModeActive) return;
+
       window.__lastSwipe = data.direction;
       setTimeout(() => { if (window.__lastSwipe === data.direction) window.__lastSwipe = 'NONE'; }, 1000);
       
-      // Gesto hacia ARRIBA -> Desplaza la página hacia ARRIBA
       if (data.direction === 'UP') {
         window.scrollBy({ top: -550, behavior: 'smooth' });
-      } 
-      // Gesto hacia ABAJO -> Desplaza la página hacia ABAJO
-      else if (data.direction === 'DOWN') {
+      } else if (data.direction === 'DOWN') {
         window.scrollBy({ top: 550, behavior: 'smooth' });
       }
     });
 
-    // 2. Scroll continuo por arrastre vertical de la mano (Motion Tracking)
+    // 2. Control de Estado de Modo Scroll (Solo con 2 dedos extendidos)
+    const unsubScrollMode = gestureEventBus.on('gesture:scroll-mode', (data) => {
+      window.__isScrollModeActive = Boolean(data.active);
+      if (data.active) {
+        window.__lastGestureState = '2-FINGER SCROLL';
+      } else if (window.__lastGestureState === '2-FINGER SCROLL') {
+        window.__lastGestureState = 'TRACKING';
+      }
+    });
+
+    // 3. Scroll continuo SOLO cuando el modo 2 dedos está activo
     let lastY = null;
     let lastScrollTime = 0;
     const unsubMove = gestureEventBus.on('hand:move', (data) => {
@@ -170,20 +180,19 @@ function App() {
       const now = performance.now();
       const currentY = data.y <= 1 ? data.y * window.innerHeight : data.y;
 
-      // Si la mano se mueve verticalmente mientras está abierta (sin pinza ni puño)
-      if (lastY !== null && window.__lastGestureState !== 'FIST' && window.__lastGestureState !== 'PINCH') {
+      // EXCLUSIVO: Solo hace scroll si está en modo 2 dedos (índice + anular/medio)
+      if (window.__isScrollModeActive && lastY !== null) {
         const deltaY = currentY - lastY;
         
-        // Si hay desplazamiento vertical intencional continuo
-        if (Math.abs(deltaY) > 8 && (now - lastScrollTime > 32)) {
-          window.scrollBy({ top: deltaY * 1.8, behavior: 'auto' });
+        if (Math.abs(deltaY) > 5 && (now - lastScrollTime > 28)) {
+          window.scrollBy({ top: deltaY * 2.2, behavior: 'auto' });
           lastScrollTime = now;
         }
       }
       lastY = currentY;
     });
 
-    // 3. Abrir/Cerrar Modal por Gesto de Dar Vuelta a la Mano (Flip Hand)
+    // 4. Abrir/Cerrar Modal por Gesto de Dar Vuelta a la Mano (Flip Hand)
     let lastFlipToggleTime = 0;
     const unsubFlip = gestureEventBus.on('gesture:flip', (data) => {
       window.__lastFlip = `${data.from} ➔ ${data.facing}`;
@@ -202,13 +211,14 @@ function App() {
       else if (window.__lastGestureState === 'PINCH') window.__lastGestureState = 'TRACKING';
     });
     
-    // 4. Fallback de scroll por teclado/driver
+    // 5. Fallback de scroll por teclado/driver
     const unsubUiScroll = gestureEventBus.on('ui:scroll', (data) => {
       window.scrollBy({ top: data.deltaY, behavior: 'smooth' });
     });
 
     return () => {
       unsubSwipe();
+      unsubScrollMode();
       unsubMove();
       unsubFlip();
       unsubPinch();
@@ -245,7 +255,7 @@ function App() {
           </h1>
           <p className="text-2xl text-zinc-400 mb-16 leading-relaxed max-w-3xl">
             1. Dale la <strong className="text-white bg-white/10 px-2 py-1 rounded">Vuelta a la Mano (Palma ↔ Dorso)</strong> para abrir o cerrar el Modal.<br/><br/>
-            2. Mueve tu mano <strong className="text-white bg-white/10 px-2 py-1 rounded">hacia Arriba o hacia Abajo</strong> para hacer scroll por la página.<br/><br/>
+            2. Extiende <strong className="text-emerald-400 bg-emerald-950/60 border border-emerald-500/40 px-2 py-1 rounded font-bold">2 Dedos (Índice y Medio/Anular)</strong> y muévelos hacia Arriba o Abajo para hacer scroll.<br/><br/>
             3. Une tu <strong className="text-white bg-white/10 px-2 py-1 rounded">Pulgar e Índice (Pinch)</strong> para hacer Touch/Click en las tarjetas.
           </p>
 
