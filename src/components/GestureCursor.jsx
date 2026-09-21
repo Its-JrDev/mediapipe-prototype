@@ -69,9 +69,11 @@ export default function GestureCursor({
 
   // Position & states
   const [pos, setPos] = useState({ x: -100, y: -100 });
+  const [normPos, setNormPos] = useState({ x: 50, y: 50 });
   const [isVisible, setIsVisible] = useState(false);
   const [isPinching, setIsPinching] = useState(false);
-  const [gestureState, setGestureState] = useState('IDLE'); // 'IDLE' | 'TRACKING' | 'PINCH' | 'FIST' | 'OPEN'
+  const [isScrollMode, setIsScrollMode] = useState(false);
+  const [gestureState, setGestureState] = useState('IDLE'); // 'IDLE' | 'TRACKING' | 'PINCH' | 'FIST' | 'OPEN' | '2-FINGER SCROLL'
   const [dwellProgress, setDwellProgress] = useState(0); // 0 to 100
   const [ripples, setRipples] = useState([]);
 
@@ -91,20 +93,28 @@ export default function GestureCursor({
   }, []);
 
   // Update cursor position and check dwell progress
-  const updatePosition = useCallback((targetX, targetY) => {
+  const updatePosition = useCallback((targetX, targetY, nx, ny) => {
     setIsVisible(true);
 
-    // Reset hide timer
+    // Reset hide timer: keeps cursor visible as long as frames arrive
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     hideTimerRef.current = setTimeout(() => {
       setIsVisible(false);
-    }, 3000);
+    }, 1500);
 
     const now = Date.now();
     const last = lastPosRef.current || { x: targetX, y: targetY, time: now };
     const dist = Math.hypot(targetX - last.x, targetY - last.y);
 
     setPos({ x: targetX, y: targetY });
+    if (typeof nx === 'number' && typeof ny === 'number') {
+      setNormPos({ x: Math.round(nx * 100), y: Math.round(ny * 100) });
+    } else if (typeof window !== 'undefined' && window.innerWidth > 0 && window.innerHeight > 0) {
+      setNormPos({
+        x: Math.round((targetX / window.innerWidth) * 100),
+        y: Math.round((targetY / window.innerHeight) * 100),
+      });
+    }
 
     // Dwell logic
     if (enableDwellClick) {
@@ -149,6 +159,8 @@ export default function GestureCursor({
       if (!data) return;
       hasHandEventsRef.current = true;
       let { x, y } = data;
+      const rawNormalizedX = (x <= 1 && x >= 0) ? x : (typeof window !== 'undefined' ? x / window.innerWidth : 0.5);
+      const rawNormalizedY = (y <= 1 && y >= 0) ? y : (typeof window !== 'undefined' ? y / window.innerHeight : 0.5);
 
       // Handle normalized [0, 1] vs screen pixel coordinates
       if (typeof window !== 'undefined') {
@@ -158,8 +170,12 @@ export default function GestureCursor({
         }
       }
 
-      updatePosition(x, y);
-      setGestureState((prev) => (prev === 'PINCH' || prev === 'FIST' ? prev : 'TRACKING'));
+      updatePosition(x, y, rawNormalizedX, rawNormalizedY);
+      setGestureState((prev) => {
+        if (isScrollMode) return '2-FINGER SCROLL';
+        if (prev === 'PINCH' || prev === 'FIST') return prev;
+        return 'TRACKING';
+      });
     });
 
     // 2. Pinch Gesture
@@ -167,7 +183,7 @@ export default function GestureCursor({
       if (!data) return;
       const active = Boolean(data.active);
       setIsPinching(active);
-      setGestureState(active ? 'PINCH' : 'TRACKING');
+      setGestureState(active ? 'PINCH' : (isScrollMode ? '2-FINGER SCROLL' : 'TRACKING'));
 
       if (active) {
         const lastX = lastPosRef.current ? lastPosRef.current.x : -100;
@@ -187,26 +203,45 @@ export default function GestureCursor({
       }
     });
 
-    // 3. Fist Gesture
-    const unsubFist = subscribe('gesture:fist', (data) => {
+    // 3. Scroll Mode (2 Fingers)
+    const unsubScrollMode = subscribe('gesture:scroll-mode', (data) => {
       const active = Boolean(data?.active);
-      setGestureState(active ? 'FIST' : 'TRACKING');
+      setIsScrollMode(active);
+      if (active) {
+        setGestureState('2-FINGER SCROLL');
+      } else {
+        setGestureState((prev) => (prev === '2-FINGER SCROLL' ? 'TRACKING' : prev));
+      }
     });
 
-    // 4. Open Hand Gesture
+    // 4. Fist Gesture
+    const unsubFist = subscribe('gesture:fist', (data) => {
+      const active = Boolean(data?.active);
+      setGestureState(active ? 'FIST' : (isScrollMode ? '2-FINGER SCROLL' : 'TRACKING'));
+    });
+
+    // 5. Open Hand Gesture
     const unsubOpen = subscribe('gesture:open', (data) => {
       const active = Boolean(data?.active);
-      if (active) setGestureState('OPEN');
+      if (active && !isScrollMode) setGestureState('OPEN');
+    });
+
+    // 6. Hand Lost: hide cursor promptly
+    const unsubLost = subscribe('hand:lost', () => {
+      setIsVisible(false);
+      setGestureState('IDLE');
     });
 
     return () => {
       unsubMove();
       unsubPinch();
+      unsubScrollMode();
       unsubFist();
       unsubOpen();
+      unsubLost();
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     };
-  }, [subscribe, updatePosition, addRipple, emit]);
+  }, [subscribe, updatePosition, addRipple, emit, isScrollMode]);
 
   // Mouse fallback for development/testing when no hand tracker is running
   useEffect(() => {
@@ -280,6 +315,8 @@ export default function GestureCursor({
           className={`absolute rounded-full transition-all duration-300 blur-md ${
             isPinching
               ? 'w-16 h-16 bg-fuchsia-500/50'
+              : isScrollMode || gestureState === '2-FINGER SCROLL'
+              ? 'w-16 h-16 bg-emerald-400/50 animate-pulse'
               : gestureState === 'FIST'
               ? 'w-14 h-14 bg-amber-500/40'
               : 'w-12 h-12 bg-cyan-400/40'
@@ -312,6 +349,8 @@ export default function GestureCursor({
             className={`transition-[stroke-dashoffset] duration-75 ${
               isPinching
                 ? 'text-fuchsia-400'
+                : isScrollMode
+                ? 'text-emerald-400'
                 : dwellProgress > 75
                 ? 'text-emerald-400'
                 : 'text-cyan-400'
@@ -324,43 +363,64 @@ export default function GestureCursor({
           className={`absolute rounded-full transition-all duration-200 shadow-lg border border-white/80 ${
             isPinching
               ? 'w-4 h-4 bg-fuchsia-400 scale-125 ring-4 ring-fuchsia-400/40'
+              : isScrollMode
+              ? 'w-4 h-4 bg-emerald-300 scale-125 ring-4 ring-emerald-400/60'
               : gestureState === 'FIST'
               ? 'w-5 h-5 bg-amber-400 scale-110 ring-2 ring-amber-400/50'
               : 'w-3 h-3 bg-cyan-300 ring-2 ring-cyan-400/60'
           }`}
         />
 
-        {/* Subtle Crosshairs */}
-        <div className="absolute w-2 h-0.5 bg-white/60 -left-2" />
-        <div className="absolute w-2 h-0.5 bg-white/60 -right-2" />
-        <div className="absolute h-2 w-0.5 bg-white/60 -top-2" />
-        <div className="absolute h-2 w-0.5 bg-white/60 -bottom-2" />
+        {/* Precision Crosshairs */}
+        <div className={`absolute h-0.5 -left-3 ${isScrollMode ? 'w-3 bg-emerald-400/80' : 'w-2.5 bg-white/70'}`} />
+        <div className={`absolute h-0.5 -right-3 ${isScrollMode ? 'w-3 bg-emerald-400/80' : 'w-2.5 bg-white/70'}`} />
+        <div className={`absolute w-0.5 -top-3 ${isScrollMode ? 'h-3 bg-emerald-400/80' : 'h-2.5 bg-white/70'}`} />
+        <div className={`absolute w-0.5 -bottom-3 ${isScrollMode ? 'h-3 bg-emerald-400/80' : 'h-2.5 bg-white/70'}`} />
       </div>
 
-      {/* Floating Status Badge */}
+      {/* Floating Status & Position Badge */}
       {showBadge && (
         <div
-          className={`absolute left-6 -top-3 px-2 py-0.5 rounded-full text-[10px] font-mono font-medium tracking-wide uppercase shadow-lg border backdrop-blur-md transition-all duration-200 whitespace-nowrap flex items-center gap-1.5 ${
+          className={`absolute left-7 -top-4 px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold tracking-wider shadow-2xl border backdrop-blur-md transition-all duration-200 whitespace-nowrap flex flex-col gap-0.5 ${
             isPinching
-              ? 'bg-fuchsia-950/80 border-fuchsia-500/60 text-fuchsia-200'
+              ? 'bg-fuchsia-950/90 border-fuchsia-500/70 text-fuchsia-200 ring-1 ring-fuchsia-500/40'
+              : isScrollMode
+              ? 'bg-emerald-950/90 border-emerald-400/70 text-emerald-200 ring-1 ring-emerald-400/40'
               : gestureState === 'FIST'
-              ? 'bg-amber-950/80 border-amber-500/60 text-amber-200'
-              : 'bg-zinc-900/85 border-cyan-500/40 text-cyan-300'
+              ? 'bg-amber-950/90 border-amber-500/70 text-amber-200 ring-1 ring-amber-500/40'
+              : 'bg-zinc-950/90 border-cyan-500/50 text-cyan-200 ring-1 ring-cyan-500/30'
           }`}
         >
-          <span
-            className={`w-1.5 h-1.5 rounded-full ${
-              isPinching
-                ? 'bg-fuchsia-400 animate-ping'
-                : gestureState === 'FIST'
-                ? 'bg-amber-400'
-                : 'bg-cyan-400 animate-pulse'
-            }`}
-          />
-          <span>{isPinching ? 'PINCH' : gestureState}</span>
-          {dwellProgress > 0 && dwellProgress < 100 && (
-            <span className="text-white/60">{Math.round(dwellProgress)}%</span>
-          )}
+          <div className="flex items-center gap-1.5">
+            <span
+              className={`w-2 h-2 rounded-full ${
+                isPinching
+                  ? 'bg-fuchsia-400 animate-ping'
+                  : isScrollMode
+                  ? 'bg-emerald-400 animate-pulse'
+                  : gestureState === 'FIST'
+                  ? 'bg-amber-400'
+                  : 'bg-cyan-400 animate-pulse'
+              }`}
+            />
+            <span className="uppercase">
+              {isPinching
+                ? 'TOUCH (PINCH)'
+                : isScrollMode
+                ? '✌️ 2-FINGER SCROLL'
+                : gestureState}
+            </span>
+            {dwellProgress > 0 && dwellProgress < 100 && (
+              <span className="text-white/60">({Math.round(dwellProgress)}%)</span>
+            )}
+          </div>
+          {/* Position Coordinates Indicator */}
+          <div className="text-[9px] text-zinc-400 flex items-center gap-2 font-mono">
+            <span>POS:</span>
+            <span className="text-white font-semibold">{normPos.x}%, {normPos.y}%</span>
+            <span className="text-zinc-600">|</span>
+            <span className="text-zinc-400">{Math.round(pos.x)}px, {Math.round(pos.y)}px</span>
+          </div>
         </div>
       )}
     </div>

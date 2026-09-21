@@ -322,6 +322,9 @@ export class HandTracker {
         if (this.lostFramesCount >= this.options.maxLostFrames) {
           this.resetLock();
           this._emitLocal('hand:lost', { timestamp });
+          if (this.eventBus && typeof this.eventBus.emit === 'function') {
+            this.eventBus.emit('hand:lost', { timestamp });
+          }
         }
       }
       return null;
