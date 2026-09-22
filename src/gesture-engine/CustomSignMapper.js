@@ -100,6 +100,8 @@ export class CustomSignMapper {
     // Lock gestual: el engine lo activa cerca del pinch para que una pose
     // parecida al pinch no dispare la seña custom sin querer
     this._gestureLock = false;
+    // Última predicción (para diagnóstico en vivo en la UI)
+    this.lastPrediction = { label: null, distance: null };
     this._listeners = new Map();
   }
 
@@ -181,6 +183,43 @@ export class CustomSignMapper {
     this._releaseHeldScroll();
   }
 
+  /** Exporta todo (muestras + mapeos + umbral) como objeto para backup JSON. */
+  exportData() {
+    return {
+      version: 1,
+      samples: this.samples,
+      modalLabel: this.getModalLabel(),
+      scrollUpLabel: this.getScrollUpLabel(),
+      scrollDownLabel: this.getScrollDownLabel(),
+      threshold: this.threshold,
+    };
+  }
+
+  /**
+   * Restaura un backup exportado (reemplaza muestras y mapeos).
+   * @param {any} data
+   * @returns {{ ok: boolean, error?: string, labels?: number }}
+   */
+  importData(data) {
+    if (!data || typeof data !== 'object' || !data.samples || typeof data.samples !== 'object') {
+      return { ok: false, error: 'Archivo inválido: no es un backup de señas' };
+    }
+    for (const [label, arr] of Object.entries(data.samples)) {
+      if (!Array.isArray(arr) || !arr.every((s) => Array.isArray(s) && s.length === 63)) {
+        return { ok: false, error: `Muestras corruptas en "${label}"` };
+      }
+    }
+    this.samples = data.samples;
+    this.recent = [];
+    this._releaseHeldScroll();
+    this.save();
+    this.setModalLabel(typeof data.modalLabel === 'string' ? data.modalLabel : '');
+    this.setScrollUpLabel(typeof data.scrollUpLabel === 'string' ? data.scrollUpLabel : '');
+    this.setScrollDownLabel(typeof data.scrollDownLabel === 'string' ? data.scrollDownLabel : '');
+    if (Number.isFinite(data.threshold)) this.setThreshold(data.threshold);
+    return { ok: true, labels: Object.keys(this.samples).length };
+  }
+
   getModalLabel() {
     try {
       return localStorage.getItem(MAP_STORE) || '';
@@ -245,13 +284,21 @@ export class CustomSignMapper {
     for (const [label, arr] of Object.entries(this.samples)) {
       for (const s of arr) all.push([Math.min(vecDist(v, s), vecDist(mv, s)), label]);
     }
-    if (!all.length) return null;
+    if (!all.length) {
+      this.lastPrediction = { label: null, distance: null };
+      return null;
+    }
     all.sort((a, b) => a[0] - b[0]);
     const top = all.slice(0, this.k);
-    if (top[0][0] > this.threshold) return null;
+    if (top[0][0] > this.threshold) {
+      this.lastPrediction = { label: null, distance: top[0][0] };
+      return null;
+    }
     const votes = {};
     for (const [d, l] of top) votes[l] = (votes[l] || 0) + 1 / (d + 1e-6);
-    return Object.entries(votes).sort((a, b) => b[1] - a[1])[0][0];
+    const winner = Object.entries(votes).sort((a, b) => b[1] - a[1])[0][0];
+    this.lastPrediction = { label: winner, distance: top[0][0] };
+    return winner;
   }
 
   /**
