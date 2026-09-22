@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { gestureEventBus as defaultBus } from '../events/GestureEventBus.js';
 import { customSignMapper } from '../gesture-engine/CustomSignMapper.js';
 
@@ -87,6 +87,8 @@ export default function ModalNavbar({
   const [scrollUpLabel, setScrollUpLabel] = useState(() => customSignMapper.getScrollUpLabel());
   const [scrollDownLabel, setScrollDownLabel] = useState(() => customSignMapper.getScrollDownLabel());
   const [customThr, setCustomThr] = useState(() => customSignMapper.threshold);
+  const [lastPred, setLastPred] = useState(null);
+  const importRef = useRef(null);
 
   // Poll de estado de grabación + refresco de etiquetas
   useEffect(() => {
@@ -102,6 +104,7 @@ export default function ModalNavbar({
       setModalLabel(customSignMapper.getModalLabel());
       setScrollUpLabel(customSignMapper.getScrollUpLabel());
       setScrollDownLabel(customSignMapper.getScrollDownLabel());
+      setLastPred({ ...customSignMapper.lastPrediction });
     }, 300);
     return () => {
       clearInterval(timer);
@@ -471,7 +474,7 @@ export default function ModalNavbar({
                       🤟 Mapear tu seña al Modal
                     </h4>
                     <p className="text-[11px] text-zinc-400 m-0 mt-0.5">
-                      Graba la posición que te guste (2.5s frente a cámara) y asígnale abrir/cerrar el modal. Vale palma y dorso: el reconocimiento es invariante al espejo.
+                      Graba la posición que te guste (2.5s frente a cámara) y asígnale abrir/cerrar el modal. Vale palma y dorso: el reconocimiento es invariante al espejo. Tip: graba el mismo nombre por palma y por dorso (las muestras se suman).
                     </p>
                   </div>
                   <div className="flex gap-2">
@@ -503,6 +506,12 @@ export default function ModalNavbar({
                     </p>
                   )}
                   {customLabels.length > 0 && (
+                    <p className="text-[11px] font-mono text-zinc-400 m-0">
+                      En vivo: {lastPred?.label ?? '—'} (d={lastPred?.distance != null ? lastPred.distance.toFixed(2) : '—'}, umbral {customThr.toFixed(2)})
+                      {lastPred?.label == null && lastPred?.distance != null && lastPred.distance <= customThr + 0.3 ? ' — cerca: graba más muestras o baja el umbral' : ''}
+                    </p>
+                  )}
+                  {customLabels.length > 0 && (
                     <>
                       <div className="flex flex-wrap gap-1.5">
                         {customLabels.map((l) => (
@@ -511,6 +520,7 @@ export default function ModalNavbar({
                             <button
                               type="button"
                               onClick={() => {
+                                if (!window.confirm(`¿Borrar la seña "${l}" y sus muestras?`)) return;
                                 customSignMapper.deleteLabel(l);
                                 setCustomLabels(customSignMapper.getLabels());
                                 setModalLabel(customSignMapper.getModalLabel());
@@ -589,6 +599,59 @@ export default function ModalNavbar({
                           className="w-full accent-fuchsia-500"
                         />
                       </label>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const blob = new Blob([JSON.stringify(customSignMapper.exportData())], { type: 'application/json' });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = 'custom-signs-backup.json';
+                            a.click();
+                            URL.revokeObjectURL(url);
+                          }}
+                          className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 text-xs font-semibold transition-colors"
+                        >
+                          ⬇ Exportar backup
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => importRef.current?.click()}
+                          className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 text-xs font-semibold transition-colors"
+                        >
+                          ⬆ Importar backup
+                        </button>
+                        <input
+                          ref={importRef}
+                          type="file"
+                          accept="application/json,.json"
+                          className="hidden"
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (!f) return;
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                              try {
+                                const r = customSignMapper.importData(JSON.parse(reader.result));
+                                if (!r.ok) setRecError(r.error);
+                                else {
+                                  setRecError(`Backup restaurado: ${r.labels} seña(s)`);
+                                  setCustomLabels(customSignMapper.getLabels());
+                                  setModalLabel(customSignMapper.getModalLabel());
+                                  setScrollUpLabel(customSignMapper.getScrollUpLabel());
+                                  setScrollDownLabel(customSignMapper.getScrollDownLabel());
+                                  setCustomThr(customSignMapper.threshold);
+                                }
+                              } catch {
+                                setRecError('Archivo inválido: no es un backup de señas');
+                              }
+                              if (importRef.current) importRef.current.value = '';
+                            };
+                            reader.readAsText(f);
+                          }}
+                        />
+                      </div>
                     </>
                   )}
                 </div>
