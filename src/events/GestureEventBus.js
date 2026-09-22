@@ -9,7 +9,13 @@
  * - 'gesture:fist': { active: boolean }
  * - 'gesture:open': { active: boolean }
  * - 'gesture:swipe': { direction: 'LEFT' | 'RIGHT' | 'UP' | 'DOWN', velocity: number }
+ * - 'gesture:edge-scroll': { zone: 'TOP' | 'BOTTOM' | 'NONE' }
+ * - 'gesture:mode': { mode: 'TRACKING' | 'PINCH' | 'EDGE_SCROLL' | 'SWIPE_COOLDOWN' }
+ * - 'gesture:custom': { label: string, timestamp: number }
+ * - 'gesture:custom-scroll': { direction: 'UP' | 'DOWN', active: boolean }
+ * - 'gesture:scroll-mode': { active: boolean } (legacy, mantener por compatibilidad)
  * - 'ui:scroll': { deltaY: number }
+ * - 'ui:navigate': { page: 'home' | 'studio' | 'info' }
  * - 'ui:toggle-modal': void
  * - 'ui:toggle-aside': void
  * - 'ui:slider-move': { percentage: number }
@@ -25,7 +31,13 @@ export const GESTURE_EVENTS = Object.freeze({
   GESTURE_OPEN: 'gesture:open',
   GESTURE_SWIPE: 'gesture:swipe',
   GESTURE_FLIP: 'gesture:flip',
+  GESTURE_EDGE_SCROLL: 'gesture:edge-scroll',
+  GESTURE_MODE: 'gesture:mode',
+  GESTURE_CUSTOM: 'gesture:custom',
+  GESTURE_CUSTOM_SCROLL: 'gesture:custom-scroll',
+  GESTURE_SCROLL_MODE: 'gesture:scroll-mode',
   UI_SCROLL: 'ui:scroll',
+  UI_NAVIGATE: 'ui:navigate',
   UI_TOGGLE_MODAL: 'ui:toggle-modal',
   UI_TOGGLE_ASIDE: 'ui:toggle-aside',
   UI_SLIDER_MOVE: 'ui:slider-move',
