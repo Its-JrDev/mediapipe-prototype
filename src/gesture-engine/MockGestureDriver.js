@@ -281,16 +281,18 @@ export class MockGestureDriver {
     const key = e.key ? e.key.toLowerCase() : '';
     const code = e.code || '';
 
-    // Tecla W: Scroll Up
+    // Tecla W: simula borde TOP (edge-scroll + scroll up)
     if (key === 'w' || code === 'KeyW') {
       if (typeof e.preventDefault === 'function') e.preventDefault();
+      this.triggerEdgeScroll('TOP');
       this.triggerScroll(-this.options.scrollDelta);
       return;
     }
 
-    // Tecla S: Scroll Down
+    // Tecla S: simula borde BOTTOM (edge-scroll + scroll down)
     if (key === 's' || code === 'KeyS') {
       if (typeof e.preventDefault === 'function') e.preventDefault();
+      this.triggerEdgeScroll('BOTTOM');
       this.triggerScroll(this.options.scrollDelta);
       return;
     }
@@ -395,6 +397,21 @@ export class MockGestureDriver {
    */
   triggerScroll(deltaY) {
     this.emit('ui:scroll', { deltaY });
+  }
+
+  /**
+   * Simula entrada/salida de zona de borde para probar edge-scroll sin cámara.
+   * @param {'TOP'|'BOTTOM'|'NONE'} zone
+   */
+  triggerEdgeScroll(zone = 'TOP') {
+    this.emit('gesture:edge-scroll', { zone });
+    this.emit('gesture:mode', { mode: zone === 'NONE' ? 'TRACKING' : 'EDGE_SCROLL' });
+    if (zone !== 'NONE') {
+      setTimeout(() => {
+        this.emit('gesture:edge-scroll', { zone: 'NONE' });
+        this.emit('gesture:mode', { mode: 'TRACKING' });
+      }, 600);
+    }
   }
 
   /**

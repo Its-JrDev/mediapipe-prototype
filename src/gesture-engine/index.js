@@ -17,6 +17,7 @@ import {
   euclideanDistance,
 } from './GestureInterpreter.js';
 import gestureEventBus, { GESTURE_EVENTS, SWIPE_DIRECTIONS } from '../events/GestureEventBus.js';
+import { CustomSignMapper, customSignMapper } from './CustomSignMapper.js';
 
 export {
   MediaPipeManager,
@@ -26,6 +27,8 @@ export {
   OneEuroFilter,
   Point2DOneEuroFilter,
   GestureInterpreter,
+  CustomSignMapper,
+  customSignMapper,
   HAND_LANDMARKS,
   euclideanDistance,
   GESTURE_EVENTS,
@@ -61,12 +64,25 @@ export class GestureEngine {
       ...options.interpreterOptions,
     });
 
+    this.customSignMapper = options.customSignMapper || customSignMapper;
+    this.customSignMapper.eventBus = this.eventBus;
+
     // Wire MediaPipe results pipeline:
-    // MediaPipeManager -> HandTracker -> GestureInterpreter
+    // MediaPipeManager -> HandTracker -> GestureInterpreter + CustomSignMapper
     this._unsubscribeMediaPipe = this.mediaPipeManager.onResults(
       (results, timestamp) => {
         const trackedHand = this.handTracker.process(results, timestamp);
+        // Exclusividad en fuente: con scroll-custom sostenido no hay pinch (una sola acción).
+        this.gestureInterpreter.suppressPinch = this.customSignMapper.isScrollHeld();
         this.gestureInterpreter.process(trackedHand, timestamp);
+        // Lock anti-choque: cerca del pinch la seña custom no predice,
+        // así poses parecidas al pinch no abren el modal sin querer.
+        const pinchD = this.gestureInterpreter.getState().pinchDistance;
+        this.customSignMapper.setGesturalLock(
+          this.gestureInterpreter.isPinching ||
+            pinchD < this.gestureInterpreter.options.pinchReleaseThreshold * 1.6,
+        );
+        this.customSignMapper.process(trackedHand, timestamp);
       }
     );
   }

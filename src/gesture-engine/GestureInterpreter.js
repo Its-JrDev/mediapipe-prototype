@@ -74,6 +74,10 @@ export class GestureInterpreter {
    * @param {number} [options.minSwipeDistance=0.12] - Minimum normalized displacement to trigger swipe
    * @param {number} [options.minSwipeVelocity=0.6] - Minimum velocity (units/sec) for swipe
    * @param {number} [options.swipeCooldownMs=400] - Refractory period in ms after a swipe trigger
+   * @param {number} [options.edgeTopThreshold=0.18] - Y normalizada bajo la cual empieza zona scroll TOP
+   * @param {number} [options.edgeBottomThreshold=0.82] - Y normalizada sobre la cual empieza zona scroll BOTTOM
+   * @param {number} [options.edgeDwellMs=300] - Tiempo sostenido en borde para activar EDGE_SCROLL
+   * @param {number} [options.discreteCooldownMs=800] - Cooldown exclusivo tras pinch/swipe
    * @param {import('../events/GestureEventBus.js').GestureEventBus} [options.eventBus] - Event bus instance
    */
   constructor(options = {}) {
@@ -86,25 +90,34 @@ export class GestureInterpreter {
       minSwipeDistance: options.minSwipeDistance ?? 0.12,
       minSwipeVelocity: options.minSwipeVelocity ?? 0.6,
       swipeCooldownMs: options.swipeCooldownMs ?? 400,
+      edgeTopThreshold: options.edgeTopThreshold ?? 0.12,
+      edgeBottomThreshold: options.edgeBottomThreshold ?? 0.88,
+      edgeDwellMs: options.edgeDwellMs ?? 250,
+      discreteCooldownMs: options.discreteCooldownMs ?? 800,
       ...options,
     };
 
     this.eventBus = options.eventBus || gestureEventBus;
+
+    // Máquina de estados exclusiva: solo un modo activo a la vez.
+    // TRACKING | PINCH | EDGE_SCROLL | SWIPE_COOLDOWN
+    this.mode = 'TRACKING';
+    this._edgeZone = 'NONE'; // 'TOP' | 'BOTTOM' | 'NONE'
+    this._edgeEnterTime = 0;
+    this._lastDiscreteTime = 0;
+
+    // Supresión externa de pinch (el engine la activa con scroll-custom sostenido)
+    this.suppressPinch = false;
 
     // Gesture states
     this.isPinching = false;
     this.isFist = false;
     this.isOpen = false;
     this.isTwoFingerScroll = false;
-    this.currentFacing = 'UNKNOWN'; // 'PALM' | 'BACK' | 'UNKNOWN'
-    this._lastFacing = null;
-    this._lastFlipTimestamp = 0;
 
     // Debounce counters
     this._fistFrameCount = 0;
     this._openFrameCount = 0;
-    this._facingFrameCount = 0;
-    this._candidateFacing = null;
 
     // Swipe motion tracking buffer
     /** @type {Array<{ x: number, y: number, time: number }>} */
@@ -114,6 +127,8 @@ export class GestureInterpreter {
     // Metrics snapshot
     this._lastPinchDistance = 1.0;
     this._lastExtendedFingerCount = 0;
+    this._lastEvalTime = 0;
+    this._evalSkip = false;
 
     // Local listeners
     this._listeners = new Map();
@@ -175,6 +190,58 @@ export class GestureInterpreter {
   }
 
   /**
+   * Cambia el modo exclusivo y notifica una sola vez por transición.
+   * @param {'TRACKING'|'PINCH'|'EDGE_SCROLL'|'SWIPE_COOLDOWN'} next
+   * @private
+   */
+  _setMode(next) {
+    if (this.mode === next) return;
+    this.mode = next;
+    this._emitEvent(GESTURE_EVENTS.GESTURE_MODE, { mode: next });
+    if (typeof window !== 'undefined') {
+      window.__lastGestureState = next === 'EDGE_SCROLL' ? `${this._edgeZone} SCROLL` : next;
+    }
+  }
+
+  /**
+   * Scroll por bordes top/down: requiere mano sostenida en la franja.
+   * @param {number} y - Y normalizada [0,1]
+   * @param {number} timestamp
+   * @returns {'TOP'|'BOTTOM'|'NONE'}
+   * @private
+   */
+  _evaluateEdgeScroll(y, timestamp) {
+    let zone = 'NONE';
+    if (y <= this.options.edgeTopThreshold) zone = 'TOP';
+    else if (y >= this.options.edgeBottomThreshold) zone = 'BOTTOM';
+
+    if (zone === 'NONE') {
+      if (this._edgeZone !== 'NONE') {
+        this._edgeZone = 'NONE';
+        this._edgeEnterTime = 0;
+        this._emitEvent(GESTURE_EVENTS.GESTURE_EDGE_SCROLL, { zone: 'NONE' });
+        if (this.mode === 'EDGE_SCROLL') this._setMode('TRACKING');
+      }
+      return 'NONE';
+    }
+
+    if (zone !== this._edgeZone) {
+      this._edgeZone = zone;
+      this._edgeEnterTime = timestamp;
+      this._emitEvent(GESTURE_EVENTS.GESTURE_EDGE_SCROLL, { zone });
+      return 'NONE'; // aún no activado, espera dwell
+    }
+
+    if (this.mode !== 'EDGE_SCROLL' && timestamp - this._edgeEnterTime >= this.options.edgeDwellMs) {
+      // Solo entra a scroll si no hay cooldown de gesto discreto reciente
+      if (timestamp - this._lastDiscreteTime >= this.options.discreteCooldownMs) {
+        this._setMode('EDGE_SCROLL');
+      }
+    }
+    return this.mode === 'EDGE_SCROLL' ? zone : 'NONE';
+  }
+
+  /**
    * Detects pinch gesture: Euclidean distance between thumb tip (4) and index tip (8).
    *
    * @param {Array<{ x: number, y: number, z?: number }>} landmarks
@@ -183,6 +250,8 @@ export class GestureInterpreter {
    * @private
    */
   _evaluatePinch(landmarks, defaultX, defaultY) {
+    // Exclusivo: pinch inhibido durante EDGE_SCROLL, cooldown de swipe o scroll-custom sostenido
+    if (this.mode === 'EDGE_SCROLL' || this.mode === 'SWIPE_COOLDOWN' || this.suppressPinch) return;
     const thumbTip = landmarks[HAND_LANDMARKS.THUMB_TIP];
     const indexTip = landmarks[HAND_LANDMARKS.INDEX_TIP];
 
@@ -198,6 +267,8 @@ export class GestureInterpreter {
     if (!this.isPinching) {
       if (distance < this.options.pinchThreshold) {
         this.isPinching = true;
+        this._lastDiscreteTime = performance.now();
+        this._setMode('PINCH');
         this._emitEvent(GESTURE_EVENTS.GESTURE_PINCH, {
           active: true,
           x,
@@ -207,6 +278,8 @@ export class GestureInterpreter {
     } else {
       if (distance > this.options.pinchReleaseThreshold) {
         this.isPinching = false;
+        this._lastDiscreteTime = performance.now();
+        this._setMode('TRACKING');
         this._emitEvent(GESTURE_EVENTS.GESTURE_PINCH, {
           active: false,
           x,
@@ -244,27 +317,12 @@ export class GestureInterpreter {
     const extendedCount = 5 - (curledCount + (thumbCurled ? 1 : 0));
     this._lastExtendedFingerCount = extendedCount;
 
-    // --- STRICT CLOSED FIST EVALUATION ---
-    // A true fist requires ALL 4 main fingers tightly curled into knuckles, thumb tucked, and NOT pinching
-    const isFistCandidate = curledCount === 4 && thumbCurled && !this.isPinching;
-
-    if (isFistCandidate) {
-      this._fistFrameCount++;
-      if (this._fistFrameCount >= this.options.fistDebounceFrames && !this.isFist) {
-        this.isFist = true;
-        if (this.isOpen) {
-          this.isOpen = false;
-          this._openFrameCount = 0;
-          this._emitEvent(GESTURE_EVENTS.GESTURE_OPEN, { active: false });
-        }
-        this._emitEvent(GESTURE_EVENTS.GESTURE_FIST, { active: true });
-      }
-    } else {
-      this._fistFrameCount = 0;
-      if (this.isFist) {
-        this.isFist = false;
-        this._emitEvent(GESTURE_EVENTS.GESTURE_FIST, { active: false });
-      }
+    // --- PUÑO CERRADO DESACTIVADO ---
+    // Solo vale la seña custom (CustomSignMapper). No se emite gesture:fist.
+    const isFistCandidate = false;
+    this._fistFrameCount = 0;
+    if (this.isFist) {
+      this.isFist = false;
     }
 
     // --- OPEN HAND EVALUATION ---
@@ -277,7 +335,6 @@ export class GestureInterpreter {
         if (this.isFist) {
           this.isFist = false;
           this._fistFrameCount = 0;
-          this._emitEvent(GESTURE_EVENTS.GESTURE_FIST, { active: false });
         }
         this._emitEvent(GESTURE_EVENTS.GESTURE_OPEN, { active: true });
       }
@@ -289,10 +346,11 @@ export class GestureInterpreter {
       }
     }
 
-    // --- TWO-FINGER SCROLL POSE EVALUATION (Index + Ring/Middle extended, Thumb & Pinky curled) ---
-    // User requested: scroll solo con 2 dedos
+    // --- TWO-FINGER SCROLL POSE (legacy, solo fuera de EDGE_SCROLL/PINCH) ---
+    // Se mantiene por compatibilidad pero ya no gobierna el scroll.
     const twoFingersExtended = !indexCurled && (!middleCurled || !ringCurled) && pinkyCurled;
-    if (twoFingersExtended && !this.isPinching && !isFistCandidate) {
+    const allowLegacyScroll = this.mode !== 'EDGE_SCROLL' && this.mode !== 'PINCH' && !this.isPinching && !isFistCandidate;
+    if (twoFingersExtended && allowLegacyScroll) {
       if (!this.isTwoFingerScroll) {
         this.isTwoFingerScroll = true;
         this._emitEvent('gesture:scroll-mode', { active: true });
@@ -314,6 +372,11 @@ export class GestureInterpreter {
    * @private
    */
   _evaluateSwipe(x, y, timestamp) {
+    // Exclusivo: sin swipe durante EDGE_SCROLL ni PINCH
+    if (this.mode === 'EDGE_SCROLL' || this.mode === 'PINCH' || this.isPinching) {
+      this._swipeHistory = [];
+      return;
+    }
     if (timestamp - this._lastSwipeTimestamp < this.options.swipeCooldownMs) {
       return;
     }
@@ -361,79 +424,17 @@ export class GestureInterpreter {
 
     if (detectedDirection) {
       this._lastSwipeTimestamp = timestamp;
+      this._lastDiscreteTime = timestamp;
       this._swipeHistory = [];
+      this._setMode('SWIPE_COOLDOWN');
+      setTimeout(() => {
+        if (this.mode === 'SWIPE_COOLDOWN' && !this.isPinching) this._setMode('TRACKING');
+      }, this.options.discreteCooldownMs);
 
       this._emitEvent(GESTURE_EVENTS.GESTURE_SWIPE, {
         direction: detectedDirection,
         velocity: Math.round(velocity * 100) / 100,
       });
-    }
-  }
-
-  /**
-   * Detects hand flipping (showing palm vs showing back of hand).
-   * Uses cross product of palm vectors (Wrist -> Index MCP) x (Wrist -> Pinky MCP)
-   * to determine the surface normal Z direction.
-   *
-   * @param {Array<{ x: number, y: number, z?: number }>} landmarks
-   * @param {number} timestamp
-   * @private
-   */
-  _evaluateFlip(landmarks, timestamp) {
-    const wrist = landmarks[HAND_LANDMARKS.WRIST];
-    const indexMcp = landmarks[HAND_LANDMARKS.INDEX_MCP];
-    const pinkyMcp = landmarks[HAND_LANDMARKS.PINKY_MCP];
-
-    if (!wrist || !indexMcp || !pinkyMcp) return;
-
-    // Vector 1: Wrist -> Index MCP
-    const v1 = {
-      x: indexMcp.x - wrist.x,
-      y: indexMcp.y - wrist.y,
-      z: (indexMcp.z || 0) - (wrist.z || 0),
-    };
-
-    // Vector 2: Wrist -> Pinky MCP
-    const v2 = {
-      x: pinkyMcp.x - wrist.x,
-      y: pinkyMcp.y - wrist.y,
-      z: (pinkyMcp.z || 0) - (wrist.z || 0),
-    };
-
-    // Palm normal Z component = (v1.x * v2.y - v1.y * v2.x)
-    const normalZ = v1.x * v2.y - v1.y * v2.x;
-
-    // Strong threshold to prevent flickering during edge-on rotations
-    let detectedFacing = 'UNKNOWN';
-    if (normalZ > 0.008) {
-      detectedFacing = 'PALM';
-    } else if (normalZ < -0.008) {
-      detectedFacing = 'BACK';
-    }
-
-    if (detectedFacing !== 'UNKNOWN') {
-      if (detectedFacing === this._candidateFacing) {
-        this._facingFrameCount++;
-        if (this._facingFrameCount >= 3) { // Require 3 stable frames
-          if (this.currentFacing !== detectedFacing) {
-            const previousFacing = this.currentFacing;
-            this.currentFacing = detectedFacing;
-
-            // If we transitioned from a known orientation to the opposite orientation
-            if (previousFacing !== 'UNKNOWN' && (timestamp - this._lastFlipTimestamp > 600)) {
-              this._lastFlipTimestamp = timestamp;
-              this._emitEvent(GESTURE_EVENTS.GESTURE_FLIP, {
-                facing: detectedFacing,
-                from: previousFacing,
-                timestamp,
-              });
-            }
-          }
-        }
-      } else {
-        this._candidateFacing = detectedFacing;
-        this._facingFrameCount = 1;
-      }
     }
   }
 
@@ -450,21 +451,35 @@ export class GestureInterpreter {
       return;
     }
 
+    // Throttle: cuando está idle (TRACKING sin gesto en curso) evalúa a ~40fps;
+    // con gesto en curso (pinch/swipe/scroll) evalúa cada frame para no perderlo.
+    // El cursor suave lo mantiene HandTracker vía hand:move, no depende de esto.
+    const idle =
+      this.mode === 'TRACKING' && !this.isPinching && this._swipeHistory.length === 0;
+    if (idle && timestamp - this._lastEvalTime < 25) {
+      return;
+    }
+    this._lastEvalTime = timestamp;
+
     const landmarks = trackedHand.landmarks;
     const currentX = trackedHand.x;
     const currentY = trackedHand.y;
 
-    // 1. Evaluate Pinch (Landmark 4 vs 8)
+    // 0. Borde top/down primero: decide si entramos a EDGE_SCROLL
+    const edgeActive = this._evaluateEdgeScroll(currentY, timestamp);
+
+    // 1. Pinch (inhibido internamente en EDGE_SCROLL / SWIPE_COOLDOWN)
     this._evaluatePinch(landmarks, currentX, currentY);
 
-    // 2. Evaluate Pose (Open Hand vs Closed Fist)
+    // 2. Pose (open/fist + legacy 2-dedos ya degradado)
     this._evaluateHandPose(landmarks);
 
-    // 3. Evaluate Swipe (Motion vector over time)
-    this._evaluateSwipe(currentX, currentY, timestamp);
-
-    // 4. Evaluate Flip (Rotating hand: palm <-> back)
-    this._evaluateFlip(landmarks, timestamp);
+    // 3. Swipe solo en TRACKING (inhibido en EDGE_SCROLL/PINCH)
+    if (!edgeActive) {
+      this._evaluateSwipe(currentX, currentY, timestamp);
+    } else {
+      this._swipeHistory = [];
+    }
   }
 
   /**
@@ -483,7 +498,6 @@ export class GestureInterpreter {
 
     if (this.isFist) {
       this.isFist = false;
-      this._emitEvent(GESTURE_EVENTS.GESTURE_FIST, { active: false });
     }
 
     if (this.isOpen) {
@@ -491,9 +505,26 @@ export class GestureInterpreter {
       this._emitEvent(GESTURE_EVENTS.GESTURE_OPEN, { active: false });
     }
 
+    if (this.isTwoFingerScroll) {
+      this.isTwoFingerScroll = false;
+      this._emitEvent('gesture:scroll-mode', { active: false });
+    }
+
+    if (this._edgeZone !== 'NONE') {
+      this._edgeZone = 'NONE';
+      this._emitEvent(GESTURE_EVENTS.GESTURE_EDGE_SCROLL, { zone: 'NONE' });
+    }
+
+    if (this.mode !== 'TRACKING') {
+      this.mode = 'TRACKING';
+      this._emitEvent(GESTURE_EVENTS.GESTURE_MODE, { mode: 'TRACKING' });
+    }
+
+    this.suppressPinch = false;
     this._fistFrameCount = 0;
     this._openFrameCount = 0;
     this._swipeHistory = [];
+    this._edgeEnterTime = 0;
   }
 
   /**
@@ -513,6 +544,8 @@ export class GestureInterpreter {
       isOpen: this.isOpen,
       pinchDistance: this._lastPinchDistance,
       extendedFingerCount: this._lastExtendedFingerCount,
+      mode: this.mode,
+      edgeZone: this._edgeZone,
     };
   }
 
