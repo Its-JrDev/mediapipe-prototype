@@ -166,9 +166,10 @@ function App() {
           engineRef.current = new GestureEngine({
             eventBus: gestureEventBus,
             mediaPipeOptions: {
-              // Confianzas bajas para no perder la mano al girar a dorso
+              // Enganche en frío del dorso: detector menos exigente (reversible si mete ruido)
+              minHandDetectionConfidence: 0.35,
               minTrackingConfidence: 0.3,
-              minHandPresenceConfidence: 0.4,
+              minHandPresenceConfidence: 0.3,
             },
             interpreterOptions: {
               pinchThreshold: 0.065,
