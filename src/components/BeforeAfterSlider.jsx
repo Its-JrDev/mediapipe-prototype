@@ -142,6 +142,7 @@ export default function BeforeAfterSlider({
 
   const containerRef = useRef(null);
   const handTimerRef = useRef(null);
+  const isPinchingRef = useRef(false);
 
   // Clamps position and updates state + triggers callbacks
   const updatePosition = useCallback((newPos, source = 'manual') => {
@@ -167,9 +168,9 @@ export default function BeforeAfterSlider({
       }
     });
 
-    // 2. Hand movement: position controlled by Index finger X coordinate
+    // 2. Hand movement: solo mueve en PINCH MODE (una sola acción a la vez)
     const unsubHand = subscribe('hand:move', (data) => {
-      if (!data || !containerRef.current) return;
+      if (!data || !containerRef.current || !isPinchingRef.current) return;
       let { x } = data;
 
       // Handle normalized vs pixel coordinates
@@ -194,6 +195,7 @@ export default function BeforeAfterSlider({
     // 3. Pinch gesture (locks or releases dragging)
     const unsubPinch = subscribe('gesture:pinch', (data) => {
       const active = Boolean(data?.active);
+      isPinchingRef.current = active;
       setIsPinching(active);
     });
 
@@ -267,7 +269,7 @@ export default function BeforeAfterSlider({
         {isHandActive && (
           <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-medium tracking-wide bg-cyan-950/80 backdrop-blur-md text-cyan-300 border border-cyan-500/60 shadow-lg shadow-cyan-950/50 animate-pulse">
             <span className="w-2 h-2 rounded-full bg-cyan-400" />
-            <span>INDEX CONTROL ACTIVE ({Math.round(position)}%)</span>
+            <span>PINCH DRAG ACTIVE ({Math.round(position)}%)</span>
           </span>
         )}
 
@@ -386,7 +388,7 @@ export default function BeforeAfterSlider({
             <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-300">→</kbd> to nudge
           </span>
           <span className="text-zinc-500">|</span>
-          <span className="text-cyan-400/90">🖐️ Point Index to slide</span>
+          <span className="text-cyan-400/90">🤏 Pinch + mueve para deslizar</span>
         </div>
       </div>
     </div>

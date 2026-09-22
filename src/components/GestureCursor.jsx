@@ -73,6 +73,9 @@ export default function GestureCursor({
   const [isVisible, setIsVisible] = useState(false);
   const [isPinching, setIsPinching] = useState(false);
   const [isScrollMode, setIsScrollMode] = useState(false);
+  const [isEdgeScroll, setIsEdgeScroll] = useState(false);
+  const isEdgeScrollRef = useRef(false);
+  const isCustomScrollRef = useRef(false); // scroll-custom por pose: inhibe clicks
   const [gestureState, setGestureState] = useState('IDLE'); // 'IDLE' | 'TRACKING' | 'PINCH' | 'FIST' | 'OPEN' | '2-FINGER SCROLL'
   const [dwellProgress, setDwellProgress] = useState(0); // 0 to 100
   const [ripples, setRipples] = useState([]);
@@ -116,8 +119,8 @@ export default function GestureCursor({
       });
     }
 
-    // Dwell logic
-    if (enableDwellClick) {
+    // Dwell logic (inhibido en EDGE_SCROLL y scroll-custom: un solo path de click = pinch)
+    if (enableDwellClick && !isEdgeScrollRef.current && !isCustomScrollRef.current) {
       if (dist < dwellThreshold) {
         if (!dwellStartRef.current) {
           dwellStartRef.current = now;
@@ -173,30 +176,38 @@ export default function GestureCursor({
       updatePosition(x, y, rawNormalizedX, rawNormalizedY);
       setGestureState((prev) => {
         if (isScrollMode) return '2-FINGER SCROLL';
-        if (prev === 'PINCH' || prev === 'FIST') return prev;
+        if (prev === 'PINCH' || prev === 'CUSTOM SCROLL') return prev;
         return 'TRACKING';
       });
     });
 
-    // 2. Pinch Gesture
+    // 2. Pinch Gesture (ignorado en EDGE_SCROLL y scroll-custom: una sola acción a la vez)
     const unsubPinch = subscribe('gesture:pinch', (data) => {
       if (!data) return;
+      if (isEdgeScrollRef.current || isCustomScrollRef.current) return;
       const active = Boolean(data.active);
       setIsPinching(active);
       setGestureState(active ? 'PINCH' : (isScrollMode ? '2-FINGER SCROLL' : 'TRACKING'));
 
       if (active) {
-        const lastX = lastPosRef.current ? lastPosRef.current.x : -100;
-        const lastY = lastPosRef.current ? lastPosRef.current.y : -100;
-        const x = typeof data.x === 'number' ? data.x : lastX;
-        const y = typeof data.y === 'number' ? data.y : lastY;
+        // Click izquierdo de facto: dispara donde está el CURSOR (lo que el
+        // usuario apunta), no en el midpoint pulgar-índice que puede caer fuera.
+        const cursorX = lastPosRef.current ? lastPosRef.current.x : -100;
+        const cursorY = lastPosRef.current ? lastPosRef.current.y : -100;
+        let x = cursorX;
+        let y = cursorY;
+        if ((x < 0 || y < 0) && typeof data.x === 'number' && typeof data.y === 'number') {
+          // Fallback: coords normalizadas del pinch -> píxeles
+          x = data.x <= 1 && data.x >= 0 && typeof window !== 'undefined' ? data.x * window.innerWidth : data.x;
+          y = data.y <= 1 && data.y >= 0 && typeof window !== 'undefined' ? data.y * window.innerHeight : data.y;
+        }
         addRipple(x, y);
 
-        // Virtual click trigger on pinch
-        if (typeof document !== 'undefined') {
+        // Virtual left-click (tabs y botones del modal incluidos)
+        if (typeof document !== 'undefined' && x >= 0 && y >= 0) {
           const el = document.elementFromPoint(x, y);
           if (el) {
-            el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+            el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window, button: 0 }));
           }
         }
         emit('ui:click', { x, y });
@@ -214,11 +225,7 @@ export default function GestureCursor({
       }
     });
 
-    // 4. Fist Gesture
-    const unsubFist = subscribe('gesture:fist', (data) => {
-      const active = Boolean(data?.active);
-      setGestureState(active ? 'FIST' : (isScrollMode ? '2-FINGER SCROLL' : 'TRACKING'));
-    });
+    // 4. Puño desactivado: solo vale la seña custom (sin suscripción a gesture:fist)
 
     // 5. Open Hand Gesture
     const unsubOpen = subscribe('gesture:open', (data) => {
@@ -232,13 +239,49 @@ export default function GestureCursor({
       setGestureState('IDLE');
     });
 
+    // 7. Modo exclusivo + edge-scroll: inhibe dwell-click
+    const unsubMode = subscribe('gesture:mode', (data) => {
+      const edge = data?.mode === 'EDGE_SCROLL';
+      isEdgeScrollRef.current = edge;
+      setIsEdgeScroll(edge);
+      if (edge) {
+        setGestureState('EDGE SCROLL');
+        setDwellProgress(0);
+        dwellStartRef.current = null;
+        dwellTriggeredRef.current = false;
+      }
+    });
+    const unsubEdge = subscribe('gesture:edge-scroll', (data) => {
+      const zone = data?.zone || 'NONE';
+      if (zone === 'NONE') {
+        isEdgeScrollRef.current = false;
+        setIsEdgeScroll(false);
+      }
+    });
+
+    // 8. Scroll-custom por pose: inhibe pinch-click y dwell-click (una sola acción a la vez)
+    const unsubCustomScroll = subscribe('gesture:custom-scroll', (data) => {
+      const active = Boolean(data?.active);
+      isCustomScrollRef.current = active;
+      if (active) {
+        setGestureState('CUSTOM SCROLL');
+        setDwellProgress(0);
+        dwellStartRef.current = null;
+        dwellTriggeredRef.current = false;
+      } else {
+        setGestureState((prev) => (prev === 'CUSTOM SCROLL' ? 'TRACKING' : prev));
+      }
+    });
+
     return () => {
       unsubMove();
       unsubPinch();
       unsubScrollMode();
-      unsubFist();
       unsubOpen();
       unsubLost();
+      unsubMode();
+      unsubEdge();
+      unsubCustomScroll();
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     };
   }, [subscribe, updatePosition, addRipple, emit, isScrollMode]);
@@ -406,8 +449,8 @@ export default function GestureCursor({
             <span className="uppercase">
               {isPinching
                 ? 'TOUCH (PINCH)'
-                : isScrollMode
-                ? '✌️ 2-FINGER SCROLL'
+                : isEdgeScroll || isScrollMode
+                ? '▼▲ EDGE SCROLL'
                 : gestureState}
             </span>
             {dwellProgress > 0 && dwellProgress < 100 && (
