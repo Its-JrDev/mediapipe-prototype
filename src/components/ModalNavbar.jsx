@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { gestureEventBus as defaultBus } from '../events/GestureEventBus.js';
+import { customSignMapper } from '../gesture-engine/CustomSignMapper.js';
 
 /**
  * Helper hook to resolve and subscribe to the GestureEventBus.
@@ -68,13 +69,45 @@ export default function ModalNavbar({
   const { subscribe, emit } = useGestureBus(eventBus);
 
   const [isModalOpen, setIsModalOpen] = useState(defaultModalOpen);
-  const [activeTab, setActiveTab] = useState('GUIDE'); // 'GUIDE' | 'SHORTCUTS' | 'SETTINGS'
+  const [activeTab, setActiveTab] = useState('VIEWS'); // 'VIEWS' | 'GUIDE' | 'SHORTCUTS' | 'SETTINGS'
+  const [currentPage, setCurrentPage] = useState('home'); // 'home' | 'studio' | 'info'
   const [lastGesture, setLastGesture] = useState('READY');
 
   // Interactive settings state inside modal
   const [audioFeedback, setAudioFeedback] = useState(true);
   const [dwellClick, setDwellClick] = useState(true);
   const [debugOverlay, setDebugOverlay] = useState(false);
+
+  // Señas custom estilo try-trackingjs para mapear acciones
+  const [customLabels, setCustomLabels] = useState(() => customSignMapper.getLabels());
+  const [newLabel, setNewLabel] = useState('');
+  const [recStatus, setRecStatus] = useState(null);
+  const [recError, setRecError] = useState('');
+  const [modalLabel, setModalLabel] = useState(() => customSignMapper.getModalLabel());
+  const [scrollUpLabel, setScrollUpLabel] = useState(() => customSignMapper.getScrollUpLabel());
+  const [scrollDownLabel, setScrollDownLabel] = useState(() => customSignMapper.getScrollDownLabel());
+  const [customThr, setCustomThr] = useState(() => customSignMapper.threshold);
+
+  // Poll de estado de grabación + refresco de etiquetas
+  useEffect(() => {
+    if (!isModalOpen) return;
+    const unsubDone = customSignMapper.on('record-done', (info) => {
+      setCustomLabels(customSignMapper.getLabels());
+      setRecStatus(null);
+      setRecError(`Listo: ${info.n} muestras de "${info.label}"`);
+    });
+    const timer = setInterval(() => {
+      setRecStatus(customSignMapper.getRecordingStatus());
+      setCustomLabels(customSignMapper.getLabels());
+      setModalLabel(customSignMapper.getModalLabel());
+      setScrollUpLabel(customSignMapper.getScrollUpLabel());
+      setScrollDownLabel(customSignMapper.getScrollDownLabel());
+    }, 300);
+    return () => {
+      clearInterval(timer);
+      unsubDone();
+    };
+  }, [isModalOpen]);
 
   const toggleModal = useCallback((force) => {
     setIsModalOpen((prev) => {
@@ -100,20 +133,25 @@ export default function ModalNavbar({
       if (data?.direction) setLastGesture(`SWIPE ${data.direction}`);
     });
 
-    const unsubFist = subscribe('gesture:fist', (data) => {
-      if (data?.active) setLastGesture('FIST');
+    const unsubCustom = subscribe('gesture:custom', (data) => {
+      if (data?.label) setLastGesture(`CUSTOM ${data.label}`);
     });
 
     const unsubOpen = subscribe('gesture:open', (data) => {
       if (data?.active) setLastGesture('OPEN HAND');
     });
 
+    const unsubNavigate = subscribe('ui:navigate', (data) => {
+      if (data?.page) setCurrentPage(data.page);
+    });
+
     return () => {
       unsubModal();
       unsubPinch();
       unsubSwipe();
-      unsubFist();
+      unsubCustom();
       unsubOpen();
+      unsubNavigate();
     };
   }, [subscribe, toggleModal]);
 
@@ -230,6 +268,9 @@ export default function ModalNavbar({
                 <p className="text-xs text-zinc-400 font-mono m-0 mt-0.5">
                   Interactive reference & simulation controls
                 </p>
+                <p className="text-[11px] font-mono text-fuchsia-300/90 m-0 mt-1">
+                  🤏 Pinch sobre pestañas y botones para pulsar
+                </p>
               </div>
             </div>
 
@@ -248,6 +289,7 @@ export default function ModalNavbar({
           {/* Navigation Tabs */}
           <div className="px-5 pt-3 bg-zinc-900/30 border-b border-zinc-800/60 flex items-center gap-2">
             {[
+              { id: 'VIEWS', label: 'Views', icon: '🧭' },
               { id: 'GUIDE', label: 'Gestures Guide', icon: '🖐️' },
               { id: 'SHORTCUTS', label: 'Mock Keys (Driver)', icon: '⌨️' },
               { id: 'SETTINGS', label: 'Preferences', icon: '⚙️' },
@@ -270,6 +312,41 @@ export default function ModalNavbar({
 
           {/* Modal Content Body */}
           <div className="p-6 overflow-y-auto space-y-4 flex-1 text-left text-zinc-200 text-sm">
+            {/* TAB 0: VIEWS NAVBAR (default) — 3 botones, cada uno redirige a su página */}
+            {activeTab === 'VIEWS' && (
+              <div className="space-y-3">
+                {/* Navbar de páginas */}
+                <nav className="flex items-center gap-2 p-2 rounded-xl bg-zinc-900/80 border border-zinc-800" aria-label="Navegación de páginas">
+                  {[
+                    { id: 'home', label: 'Inicio', icon: '🏠' },
+                    { id: 'studio', label: 'Estudio', icon: '🎚️' },
+                    { id: 'info', label: 'Info', icon: 'ℹ️' },
+                  ].map((v) => (
+                    <button
+                      key={v.id}
+                      type="button"
+                      onClick={() => {
+                        emit('ui:navigate', { page: v.id });
+                        setCurrentPage(v.id);
+                        toggleModal(false);
+                      }}
+                      className={`flex-1 min-h-[52px] px-3 py-2.5 text-sm font-semibold rounded-lg transition-all duration-150 flex items-center justify-center gap-1.5 active:scale-95 ${
+                        currentPage === v.id
+                          ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-md shadow-cyan-600/30 scale-[1.02]'
+                          : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+                      }`}
+                    >
+                      <span>{v.icon}</span>
+                      <span>{v.label}</span>
+                    </button>
+                  ))}
+                </nav>
+                <p className="text-[11px] font-mono text-zinc-500 text-center m-0">
+                  Haz pinch en un botón para ir a su página · Actual: {currentPage}
+                </p>
+              </div>
+            )}
+
             {/* TAB 1: GESTURE GUIDE */}
             {activeTab === 'GUIDE' && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
@@ -304,16 +381,16 @@ export default function ModalNavbar({
                 </div>
 
                 <div className="p-3.5 rounded-xl bg-zinc-900/60 border border-zinc-800/80 flex items-start gap-3">
-                  <span className="text-2xl pt-0.5">✊</span>
+                  <span className="text-2xl pt-0.5">🤟</span>
                   <div>
-                    <h3 className="text-xs font-bold font-mono uppercase text-amber-300 m-0">
-                      Closed Fist
+                    <h3 className="text-xs font-bold font-mono uppercase text-fuchsia-300 m-0">
+                      Custom Sign
                     </h3>
                     <p className="text-xs text-zinc-400 mt-1 m-0">
-                      All finger tips curled close to the wrist/palm root (landmark 0).
+                      Tu seña entrenada en Settings. Mantenla estable para disparar su acción mapeada.
                     </p>
-                    <span className="inline-block mt-2 px-2 py-0.5 rounded text-[10px] font-mono bg-amber-950 text-amber-300 border border-amber-500/40">
-                      Trigger: Grip / Hold State
+                    <span className="inline-block mt-2 px-2 py-0.5 rounded text-[10px] font-mono bg-fuchsia-950 text-fuchsia-300 border border-fuchsia-500/40">
+                      Trigger: Toggle Modal (mapeable)
                     </span>
                   </div>
                 </div>
@@ -387,6 +464,135 @@ export default function ModalNavbar({
             {/* TAB 3: PREFERENCES */}
             {activeTab === 'SETTINGS' && (
               <div className="space-y-3.5">
+                {/* Mapeo de seña custom al modal (estilo try-trackingjs) */}
+                <div className="p-3.5 rounded-xl bg-zinc-900/60 border border-fuchsia-500/30 space-y-3">
+                  <div>
+                    <h4 className="text-xs font-semibold text-fuchsia-200 m-0">
+                      🤟 Mapear tu seña al Modal
+                    </h4>
+                    <p className="text-[11px] text-zinc-400 m-0 mt-0.5">
+                      Graba la posición que te guste (2.5s frente a cámara) y asígnale abrir/cerrar el modal. Vale palma y dorso: el reconocimiento es invariante al espejo.
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      value={newLabel}
+                      onChange={(e) => setNewLabel(e.target.value)}
+                      placeholder="Nombre seña (ej. garra)"
+                      className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-zinc-100 placeholder:text-zinc-500 outline-none focus:border-fuchsia-500"
+                    />
+                    <button
+                      type="button"
+                      disabled={!!recStatus}
+                      onClick={() => {
+                        const r = customSignMapper.startRecording(newLabel);
+                        if (!r.ok) setRecError(r.error);
+                        else {
+                          setRecError('Prepárate… grabando 2.5s');
+                          setRecStatus(customSignMapper.getRecordingStatus());
+                        }
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-fuchsia-600 hover:bg-fuchsia-500 disabled:opacity-50 text-white text-xs font-semibold transition-colors"
+                    >
+                      {recStatus ? `Grabando… ${recStatus.n}` : 'Grabar'}
+                    </button>
+                  </div>
+                  {(recStatus || recError) && (
+                    <p className="text-[11px] font-mono text-cyan-300 m-0">
+                      {recStatus ? `Grabando "${recStatus.label}"… ${recStatus.n} muestras` : recError}
+                    </p>
+                  )}
+                  {customLabels.length > 0 && (
+                    <>
+                      <div className="flex flex-wrap gap-1.5">
+                        {customLabels.map((l) => (
+                          <span key={l} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-mono bg-zinc-800 border border-zinc-700 text-zinc-200">
+                            {l} ({customSignMapper.countFor(l)})
+                            <button
+                              type="button"
+                              onClick={() => {
+                                customSignMapper.deleteLabel(l);
+                                setCustomLabels(customSignMapper.getLabels());
+                                setModalLabel(customSignMapper.getModalLabel());
+                                setScrollUpLabel(customSignMapper.getScrollUpLabel());
+                                setScrollDownLabel(customSignMapper.getScrollDownLabel());
+                              }}
+                              className="text-zinc-500 hover:text-red-400 ml-0.5"
+                              aria-label={`Borrar ${l}`}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                      <label className="block text-[11px] text-zinc-400">
+                        Seña que abre/cierra el modal:
+                        <select
+                          value={modalLabel}
+                          onChange={(e) => {
+                            customSignMapper.setModalLabel(e.target.value);
+                            setModalLabel(e.target.value);
+                          }}
+                          className="mt-1 w-full px-2.5 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-zinc-100 outline-none focus:border-fuchsia-500"
+                        >
+                          <option value="">— ninguna —</option>
+                          {customLabels.map((l) => (
+                            <option key={l} value={l}>{l}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="block text-[11px] text-zinc-400">
+                        Seña scroll arriba (sostenida, sin ir al borde):
+                        <select
+                          value={scrollUpLabel}
+                          onChange={(e) => {
+                            customSignMapper.setScrollUpLabel(e.target.value);
+                            setScrollUpLabel(e.target.value);
+                          }}
+                          className="mt-1 w-full px-2.5 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-zinc-100 outline-none focus:border-fuchsia-500"
+                        >
+                          <option value="">— ninguna —</option>
+                          {customLabels.map((l) => (
+                            <option key={l} value={l}>{l}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="block text-[11px] text-zinc-400">
+                        Seña scroll abajo (sostenida, sin ir al borde):
+                        <select
+                          value={scrollDownLabel}
+                          onChange={(e) => {
+                            customSignMapper.setScrollDownLabel(e.target.value);
+                            setScrollDownLabel(e.target.value);
+                          }}
+                          className="mt-1 w-full px-2.5 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-zinc-100 outline-none focus:border-fuchsia-500"
+                        >
+                          <option value="">— ninguna —</option>
+                          {customLabels.map((l) => (
+                            <option key={l} value={l}>{l}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="block text-[11px] text-zinc-400">
+                        Umbral (distancia máx.): {customThr.toFixed(2)}
+                        <input
+                          type="range"
+                          min="0.2"
+                          max="2"
+                          step="0.05"
+                          value={customThr}
+                          onChange={(e) => {
+                            const t = parseFloat(e.target.value);
+                            customSignMapper.setThreshold(t);
+                            setCustomThr(t);
+                          }}
+                          className="w-full accent-fuchsia-500"
+                        />
+                      </label>
+                    </>
+                  )}
+                </div>
+
                 <div className="flex items-center justify-between p-3.5 rounded-xl bg-zinc-900/60 border border-zinc-800">
                   <div>
                     <h4 className="text-xs font-semibold text-zinc-200 m-0">
